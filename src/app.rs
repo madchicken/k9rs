@@ -1,10 +1,12 @@
 use gpui::*;
 
 use crate::k8s::{K8sClient, runtime::spawn_on_tokio};
+use crate::model::resources::{RESOURCES, resource_index};
 use crate::model::table::TableData;
 use crate::ui::header::Header;
 use crate::ui::namespace_picker::NamespacePicker;
 use crate::ui::resource_table::ResourceTable;
+use crate::ui::sidebar::Sidebar;
 use crate::ui::status_bar::StatusBar;
 
 actions!(
@@ -17,25 +19,33 @@ actions!(
         ActivateCommand,
         ActivateFilter,
         ToggleNamespacePicker,
+        ToggleSidebar,
         Backspace,
     ]
 );
 
+/// Which panel has focus
+#[derive(Clone, Copy, PartialEq)]
+enum FocusPanel {
+    Sidebar,
+    Table,
+}
+
 /// Main application view — the root of the UI tree
 pub struct AppView {
     focus_handle: FocusHandle,
+    active_panel: FocusPanel,
     current_resource: String,
     current_namespace: String,
     current_context: String,
     table_data: TableData,
     selected_row: usize,
+    sidebar_selected: usize,
     command_input: String,
     command_mode: bool,
     status_message: String,
-    /// Resource filter
     filter_mode: bool,
     filter_text: String,
-    /// Namespace picker state
     ns_picker_visible: bool,
     ns_picker_list: Vec<String>,
     ns_picker_selected: usize,
@@ -57,14 +67,17 @@ impl AppView {
         resource: &str,
     ) -> Self {
         let focus_handle = cx.focus_handle();
+        let sidebar_selected = resource_index(resource).unwrap_or(0);
 
         let mut view = Self {
             focus_handle,
+            active_panel: FocusPanel::Table,
             current_resource: resource.to_string(),
             current_namespace: namespace.to_string(),
             current_context: "unknown".to_string(),
             table_data: TableData::empty(),
             selected_row: 0,
+            sidebar_selected,
             command_input: String::new(),
             command_mode: false,
             status_message: "Connecting to cluster...".to_string(),
@@ -76,7 +89,6 @@ impl AppView {
             ns_picker_filter: String::new(),
         };
 
-        // Detect or use provided context
         if let Some(ctx) = context {
             view.current_context = ctx.to_string();
             view.status_message = "Connected".to_string();
@@ -84,9 +96,7 @@ impl AppView {
             view.detect_context();
         }
 
-        // Load initial data
         view.load_resource_data(cx);
-
         view
     }
 
@@ -100,6 +110,15 @@ impl AppView {
                 self.status_message = format!("No cluster: {e}");
             }
         }
+    }
+
+    fn switch_resource(&mut self, api_name: &str, cx: &mut Context<Self>) {
+        self.current_resource = api_name.to_string();
+        self.sidebar_selected = resource_index(api_name).unwrap_or(self.sidebar_selected);
+        self.filter_text.clear();
+        self.filter_mode = false;
+        self.selected_row = 0;
+        self.load_resource_data(cx);
     }
 
     fn load_resource_data(&mut self, cx: &mut Context<Self>) {
@@ -189,6 +208,10 @@ impl AppView {
             }
             let new_idx = self.ns_picker_selected as i32 + delta;
             self.ns_picker_selected = new_idx.clamp(0, count as i32 - 1) as usize;
+        } else if self.active_panel == FocusPanel::Sidebar {
+            let count = RESOURCES.len();
+            let new_idx = self.sidebar_selected as i32 + delta;
+            self.sidebar_selected = new_idx.clamp(0, count as i32 - 1) as usize;
         } else {
             let row_count = self.filtered_rows().len();
             if row_count == 0 {
@@ -264,10 +287,7 @@ impl AppView {
             other => other,
         };
 
-        self.current_resource = resource.to_string();
-        self.filter_text.clear();
-        self.filter_mode = false;
-        self.load_resource_data(cx);
+        self.switch_resource(resource, cx);
     }
 }
 
@@ -285,6 +305,12 @@ impl Render for AppView {
             rows: filtered_rows.iter().map(|(_, row)| (*row).clone()).collect(),
         };
         let table = ResourceTable::new(&filtered_table, self.selected_row);
+
+        let sidebar = Sidebar::new(
+            &self.current_resource,
+            self.sidebar_selected,
+            self.active_panel == FocusPanel::Sidebar,
+        );
 
         let status = StatusBar::new(
             &self.status_message,
@@ -333,9 +359,10 @@ impl Render for AppView {
                 } else if this.command_mode {
                     this.command_mode = false;
                     this.command_input.clear();
+                } else if this.active_panel == FocusPanel::Sidebar {
+                    this.active_panel = FocusPanel::Table;
                 } else if this.current_resource == "namespaces" {
-                    this.current_resource = "pods".to_string();
-                    this.load_resource_data(cx);
+                    this.switch_resource("pods", cx);
                 }
                 cx.notify();
             }))
@@ -343,16 +370,21 @@ impl Render for AppView {
                 if this.ns_picker_visible {
                     this.select_namespace(cx);
                 } else if this.filter_mode {
-                    // Confirm filter — exit filter mode but keep filter active
                     this.filter_mode = false;
                 } else if this.command_mode {
                     this.handle_command(cx);
+                } else if this.active_panel == FocusPanel::Sidebar {
+                    // Select the resource from the sidebar
+                    if let Some(entry) = RESOURCES.get(this.sidebar_selected) {
+                        let api_name = entry.api_name.to_string();
+                        this.active_panel = FocusPanel::Table;
+                        this.switch_resource(&api_name, cx);
+                    }
                 } else if this.current_resource == "namespaces" {
                     if let Some(row) = this.table_data.rows.get(this.selected_row) {
                         if let Some(ns_name) = row.cells.first() {
                             this.current_namespace = ns_name.clone();
-                            this.current_resource = "pods".to_string();
-                            this.load_resource_data(cx);
+                            this.switch_resource("pods", cx);
                         }
                     }
                 }
@@ -360,6 +392,13 @@ impl Render for AppView {
             }))
             .on_action(cx.listener(|this, _: &ToggleNamespacePicker, _window, cx| {
                 this.toggle_namespace_picker(cx);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &ToggleSidebar, _window, cx| {
+                this.active_panel = match this.active_panel {
+                    FocusPanel::Sidebar => FocusPanel::Table,
+                    FocusPanel::Table => FocusPanel::Sidebar,
+                };
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &Backspace, _window, cx| {
@@ -394,15 +433,24 @@ impl Render for AppView {
             }))
             // Header
             .child(header.into_element())
-            // Main table area
+            // Body: sidebar + table
             .child(
                 div()
-                    .id("table-scroll")
+                    .flex()
                     .flex_1()
-                    .overflow_y_scroll()
-                    .child(table.into_element()),
+                    .overflow_hidden()
+                    // Sidebar
+                    .child(sidebar.into_element())
+                    // Table
+                    .child(
+                        div()
+                            .id("table-scroll")
+                            .flex_1()
+                            .overflow_y_scroll()
+                            .child(table.into_element()),
+                    ),
             )
-            // Status bar / command input
+            // Status bar
             .child(status.into_element());
 
         // Namespace picker overlay

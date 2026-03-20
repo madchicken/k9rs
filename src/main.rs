@@ -53,6 +53,8 @@ fn main() {
             KeyBinding::new("backspace", app::Backspace, Some("app")),
             // Filter
             KeyBinding::new("/", app::ActivateFilter, Some("app")),
+            // Panel navigation
+            KeyBinding::new("tab", app::ToggleSidebar, Some("app")),
             // Namespace picker toggle
             KeyBinding::new("ctrl-n", app::ToggleNamespacePicker, Some("app")),
         ]);
