@@ -1,3 +1,4 @@
+pub mod detail_panel;
 pub mod header;
 pub mod namespace_picker;
 pub mod resource_table;

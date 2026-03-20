@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use anyhow::{Context, Result};
 use k8s_openapi::api::apps::v1::{DaemonSet, Deployment, ReplicaSet, StatefulSet};
 use k8s_openapi::api::batch::v1::{CronJob, Job};
@@ -6,9 +8,10 @@ use k8s_openapi::api::core::v1::{
     Service, ServiceAccount,
 };
 use k8s_openapi::api::networking::v1::Ingress;
-use kube::api::{Api, ListParams, ResourceExt};
+use kube::api::{Api, ListParams, LogParams, ResourceExt};
 use kube::{Client, Config};
 
+use crate::model::detail::{Condition, ContainerInfo, EventEntry, OwnerRef, PodInfo, ResourceDetail};
 use crate::model::table::{TableColumn, TableData, TableRow};
 
 /// Kubernetes client wrapper for k9rs
@@ -566,6 +569,705 @@ impl K8sClient {
         }).collect();
         Ok(TableData { columns, rows })
     }
+
+    // ── Resource Detail Methods ──────────────────────────────────────
+
+    /// Get detailed info for a single resource
+    pub async fn get_resource_detail(
+        resource_type: &str,
+        name: &str,
+        namespace: &str,
+    ) -> Result<ResourceDetail> {
+        let client = Self::client().await?;
+
+        match resource_type {
+            "pods" => Self::get_pod_detail(client, name, namespace).await,
+            "deployments" => Self::get_deployment_detail(client, name, namespace).await,
+            "services" => Self::get_service_detail(client, name, namespace).await,
+            "statefulsets" => Self::get_statefulset_detail(client, name, namespace).await,
+            "daemonsets" => Self::get_daemonset_detail(client, name, namespace).await,
+            "replicasets" => Self::get_replicaset_detail(client, name, namespace).await,
+            "jobs" => Self::get_job_detail(client, name, namespace).await,
+            "cronjobs" => Self::get_cronjob_detail(client, name, namespace).await,
+            "nodes" => Self::get_node_detail(client, name).await,
+            // Generic fallback: fetch as JSON, extract metadata
+            other => Self::get_generic_detail(client, other, name, namespace).await,
+        }
+    }
+
+    /// Get pod logs
+    pub async fn get_pod_logs(
+        name: &str,
+        namespace: &str,
+        container: Option<&str>,
+        tail_lines: Option<i64>,
+    ) -> Result<String> {
+        let client = Self::client().await?;
+        let api: Api<Pod> = Api::namespaced(client, namespace);
+        let mut params = LogParams {
+            tail_lines,
+            ..Default::default()
+        };
+        if let Some(c) = container {
+            params.container = Some(c.to_string());
+        }
+        let logs = api.logs(name, &params).await?;
+        Ok(logs)
+    }
+
+    /// Fetch events related to a specific resource
+    async fn get_resource_events(
+        client: Client,
+        name: &str,
+        namespace: &str,
+    ) -> Vec<EventEntry> {
+        let api: Api<Event> = Api::namespaced(client, namespace);
+        let field_selector = format!("involvedObject.name={name}");
+        let lp = ListParams::default().fields(&field_selector);
+        let events = match api.list(&lp).await {
+            Ok(list) => list,
+            Err(_) => return vec![],
+        };
+        events
+            .items
+            .into_iter()
+            .map(|ev| EventEntry {
+                type_: ev.type_.unwrap_or_default(),
+                reason: ev.reason.unwrap_or_default(),
+                age: ev
+                    .metadata
+                    .creation_timestamp
+                    .as_ref()
+                    .map(|ts| format_age(&ts.0))
+                    .unwrap_or_default(),
+                from: ev
+                    .source
+                    .and_then(|s| s.component)
+                    .unwrap_or_default(),
+                message: ev.message.unwrap_or_default(),
+            })
+            .collect()
+    }
+
+    /// Fetch pods matching a label selector (for workload detail views)
+    async fn get_workload_pods(
+        client: Client,
+        namespace: &str,
+        label_selector: &str,
+    ) -> Vec<PodInfo> {
+        let api: Api<Pod> = Api::namespaced(client, namespace);
+        let lp = ListParams::default().labels(label_selector);
+        let pods = match api.list(&lp).await {
+            Ok(list) => list,
+            Err(_) => return vec![],
+        };
+
+        pods.items
+            .into_iter()
+            .map(|pod| {
+                let name = pod.name_any();
+                let status = pod.status.as_ref();
+
+                let phase = status
+                    .and_then(|s| s.phase.clone())
+                    .unwrap_or_else(|| "Unknown".into());
+
+                let container_statuses = status.and_then(|s| s.container_statuses.as_ref());
+
+                let (ready_count, total_count) = container_statuses
+                    .map(|cs| {
+                        let ready = cs.iter().filter(|c| c.ready).count();
+                        (ready, cs.len())
+                    })
+                    .unwrap_or((0, 0));
+
+                let restarts: i32 = container_statuses
+                    .map(|cs| cs.iter().map(|c| c.restart_count).sum())
+                    .unwrap_or(0);
+
+                // Find last restart info from container statuses
+                let (last_restart_time, last_restart_reason) = container_statuses
+                    .and_then(|cs| {
+                        cs.iter()
+                            .filter_map(|c| {
+                                c.last_state.as_ref().and_then(|ls| {
+                                    ls.terminated.as_ref().map(|t| {
+                                        let time = t
+                                            .finished_at
+                                            .as_ref()
+                                            .map(|ts| format_age(&ts.0))
+                                            .unwrap_or_default();
+                                        let reason =
+                                            t.reason.clone().unwrap_or_else(|| {
+                                                format!("exit code {}", t.exit_code)
+                                            });
+                                        (time, reason)
+                                    })
+                                })
+                            })
+                            .next()
+                    })
+                    .unwrap_or_default();
+
+                let node = pod
+                    .spec
+                    .as_ref()
+                    .and_then(|s| s.node_name.clone())
+                    .unwrap_or_default();
+
+                let ip = status
+                    .and_then(|s| s.pod_ip.clone())
+                    .unwrap_or_default();
+
+                let age = pod
+                    .metadata
+                    .creation_timestamp
+                    .as_ref()
+                    .map(|ts| format_age(&ts.0))
+                    .unwrap_or_else(|| "Unknown".into());
+
+                PodInfo {
+                    name,
+                    ready: format!("{ready_count}/{total_count}"),
+                    status: phase,
+                    cpu: "-".to_string(),
+                    memory: "-".to_string(),
+                    restarts,
+                    last_restart_time,
+                    last_restart_reason,
+                    node,
+                    ip,
+                    age,
+                }
+            })
+            .collect()
+    }
+
+    /// Extract common metadata fields into a ResourceDetail
+    fn extract_metadata(
+        meta: &k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta,
+        resource_type: &str,
+    ) -> ResourceDetail {
+        let name = meta.name.clone().unwrap_or_default();
+        let namespace = meta.namespace.clone();
+        let age = meta
+            .creation_timestamp
+            .as_ref()
+            .map(|ts| format_age(&ts.0))
+            .unwrap_or_else(|| "Unknown".into());
+        let labels = meta.labels.clone().unwrap_or_default();
+        let annotations = meta.annotations.clone().unwrap_or_default();
+        let owner_references = meta
+            .owner_references
+            .as_ref()
+            .map(|refs| {
+                refs.iter()
+                    .map(|r| OwnerRef {
+                        kind: r.kind.clone(),
+                        name: r.name.clone(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        ResourceDetail {
+            name,
+            namespace,
+            resource_type: resource_type.to_string(),
+            age,
+            phase: String::new(),
+            labels,
+            annotations,
+            owner_references,
+            conditions: vec![],
+            containers: vec![],
+            pods: vec![],
+            yaml: String::new(),
+            events: vec![],
+        }
+    }
+
+    async fn get_pod_detail(client: Client, name: &str, namespace: &str) -> Result<ResourceDetail> {
+        let api: Api<Pod> = Api::namespaced(client.clone(), namespace);
+        let pod = api.get(name).await?;
+
+        let mut detail = Self::extract_metadata(&pod.metadata, "pods");
+        detail.yaml = serde_yaml::to_string(&pod).unwrap_or_default();
+
+        if let Some(status) = &pod.status {
+            detail.phase = status.phase.clone().unwrap_or_else(|| "Unknown".into());
+
+            if let Some(conditions) = &status.conditions {
+                detail.conditions = conditions
+                    .iter()
+                    .map(|c| Condition {
+                        type_: c.type_.clone(),
+                        status: c.status.clone(),
+                        reason: c.reason.clone().unwrap_or_default(),
+                        message: c.message.clone().unwrap_or_default(),
+                        last_transition: c
+                            .last_transition_time
+                            .as_ref()
+                            .map(|ts| format_age(&ts.0))
+                            .unwrap_or_default(),
+                    })
+                    .collect();
+            }
+
+            if let Some(cs) = &status.container_statuses {
+                detail.containers = cs
+                    .iter()
+                    .map(|c| {
+                        let state = if let Some(s) = &c.state {
+                            if s.running.is_some() {
+                                "Running".to_string()
+                            } else if let Some(w) = &s.waiting {
+                                format!("Waiting: {}", w.reason.as_deref().unwrap_or("Unknown"))
+                            } else if let Some(t) = &s.terminated {
+                                format!("Terminated: {}", t.reason.as_deref().unwrap_or("Unknown"))
+                            } else {
+                                "Unknown".to_string()
+                            }
+                        } else {
+                            "Unknown".to_string()
+                        };
+                        ContainerInfo {
+                            name: c.name.clone(),
+                            image: c.image.clone(),
+                            ready: c.ready,
+                            restart_count: c.restart_count,
+                            state,
+                            ports: String::new(),
+                        }
+                    })
+                    .collect();
+            }
+        }
+
+        // Enrich containers with port info from spec
+        if let Some(spec) = &pod.spec {
+            for spec_container in &spec.containers {
+                if let Some(detail_container) = detail
+                    .containers
+                    .iter_mut()
+                    .find(|c| c.name == spec_container.name)
+                {
+                    detail_container.ports = spec_container
+                        .ports
+                        .as_ref()
+                        .map(|ports| {
+                            ports
+                                .iter()
+                                .map(|p| {
+                                    format!(
+                                        "{}/{}",
+                                        p.container_port,
+                                        p.protocol.as_deref().unwrap_or("TCP")
+                                    )
+                                })
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        })
+                        .unwrap_or_default();
+                }
+            }
+        }
+
+        detail.events = Self::get_resource_events(client, name, namespace).await;
+        Ok(detail)
+    }
+
+    async fn get_deployment_detail(
+        client: Client,
+        name: &str,
+        namespace: &str,
+    ) -> Result<ResourceDetail> {
+        let api: Api<Deployment> = Api::namespaced(client.clone(), namespace);
+        let dep = api.get(name).await?;
+
+        let mut detail = Self::extract_metadata(&dep.metadata, "deployments");
+        detail.yaml = serde_yaml::to_string(&dep).unwrap_or_default();
+
+        if let Some(status) = &dep.status {
+            let ready = status.ready_replicas.unwrap_or(0);
+            let desired = status.replicas.unwrap_or(0);
+            detail.phase = format!("{ready}/{desired} ready");
+
+            if let Some(conditions) = &status.conditions {
+                detail.conditions = conditions
+                    .iter()
+                    .map(|c| Condition {
+                        type_: c.type_.clone(),
+                        status: c.status.clone(),
+                        reason: c.reason.clone().unwrap_or_default(),
+                        message: c.message.clone().unwrap_or_default(),
+                        last_transition: c
+                            .last_transition_time
+                            .as_ref()
+                            .map(|ts| format_age(&ts.0))
+                            .unwrap_or_default(),
+                    })
+                    .collect();
+            }
+        }
+
+        // Show containers from the pod template spec
+        if let Some(spec) = &dep.spec {
+            detail.containers = spec
+                .template
+                .spec
+                .as_ref()
+                .map(|ps| {
+                    ps.containers
+                        .iter()
+                        .map(|c| ContainerInfo {
+                            name: c.name.clone(),
+                            image: c.image.clone().unwrap_or_default(),
+                            ready: true,
+                            restart_count: 0,
+                            state: "Template".to_string(),
+                            ports: c
+                                .ports
+                                .as_ref()
+                                .map(|ports| {
+                                    ports
+                                        .iter()
+                                        .map(|p| {
+                                            format!(
+                                                "{}/{}",
+                                                p.container_port,
+                                                p.protocol.as_deref().unwrap_or("TCP")
+                                            )
+                                        })
+                                        .collect::<Vec<_>>()
+                                        .join(", ")
+                                })
+                                .unwrap_or_default(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+        }
+
+        // Fetch pods for this deployment
+        if let Some(spec) = &dep.spec {
+            if let Some(selector) = &spec.selector.match_labels {
+                let label_selector = selector
+                    .iter()
+                    .map(|(k, v)| format!("{k}={v}"))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                detail.pods =
+                    Self::get_workload_pods(client.clone(), namespace, &label_selector).await;
+            }
+        }
+
+        detail.events = Self::get_resource_events(client, name, namespace).await;
+        Ok(detail)
+    }
+
+    async fn get_service_detail(
+        client: Client,
+        name: &str,
+        namespace: &str,
+    ) -> Result<ResourceDetail> {
+        let api: Api<Service> = Api::namespaced(client.clone(), namespace);
+        let svc = api.get(name).await?;
+
+        let mut detail = Self::extract_metadata(&svc.metadata, "services");
+        detail.yaml = serde_yaml::to_string(&svc).unwrap_or_default();
+
+        if let Some(spec) = &svc.spec {
+            detail.phase = spec.type_.clone().unwrap_or_else(|| "ClusterIP".into());
+        }
+
+        detail.events = Self::get_resource_events(client, name, namespace).await;
+        Ok(detail)
+    }
+
+    async fn get_statefulset_detail(
+        client: Client,
+        name: &str,
+        namespace: &str,
+    ) -> Result<ResourceDetail> {
+        let api: Api<StatefulSet> = Api::namespaced(client.clone(), namespace);
+        let sts = api.get(name).await?;
+
+        let mut detail = Self::extract_metadata(&sts.metadata, "statefulsets");
+        detail.yaml = serde_yaml::to_string(&sts).unwrap_or_default();
+
+        if let Some(status) = &sts.status {
+            let ready = status.ready_replicas.unwrap_or(0);
+            let replicas = status.replicas;
+            detail.phase = format!("{ready}/{replicas} ready");
+        }
+
+        if let Some(spec) = &sts.spec {
+            detail.containers = spec
+                .template
+                .spec
+                .as_ref()
+                .map(|ps| {
+                    ps.containers
+                        .iter()
+                        .map(|c| ContainerInfo {
+                            name: c.name.clone(),
+                            image: c.image.clone().unwrap_or_default(),
+                            ready: true,
+                            restart_count: 0,
+                            state: "Template".to_string(),
+                            ports: String::new(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            if let Some(selector) = &spec.selector.match_labels {
+                let label_selector = selector
+                    .iter()
+                    .map(|(k, v)| format!("{k}={v}"))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                detail.pods =
+                    Self::get_workload_pods(client.clone(), namespace, &label_selector).await;
+            }
+        }
+
+        detail.events = Self::get_resource_events(client, name, namespace).await;
+        Ok(detail)
+    }
+
+    async fn get_daemonset_detail(
+        client: Client,
+        name: &str,
+        namespace: &str,
+    ) -> Result<ResourceDetail> {
+        let api: Api<DaemonSet> = Api::namespaced(client.clone(), namespace);
+        let ds = api.get(name).await?;
+
+        let mut detail = Self::extract_metadata(&ds.metadata, "daemonsets");
+        detail.yaml = serde_yaml::to_string(&ds).unwrap_or_default();
+
+        if let Some(status) = &ds.status {
+            detail.phase = format!(
+                "{}/{} ready",
+                status.number_ready, status.desired_number_scheduled
+            );
+        }
+
+        // Fetch pods for daemonset
+        if let Some(spec) = &ds.spec {
+            if let Some(selector) = &spec.selector.match_labels {
+                let label_selector = selector
+                    .iter()
+                    .map(|(k, v)| format!("{k}={v}"))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                detail.pods =
+                    Self::get_workload_pods(client.clone(), namespace, &label_selector).await;
+            }
+        }
+
+        detail.events = Self::get_resource_events(client, name, namespace).await;
+        Ok(detail)
+    }
+
+    async fn get_replicaset_detail(
+        client: Client,
+        name: &str,
+        namespace: &str,
+    ) -> Result<ResourceDetail> {
+        let api: Api<ReplicaSet> = Api::namespaced(client.clone(), namespace);
+        let rs = api.get(name).await?;
+
+        let mut detail = Self::extract_metadata(&rs.metadata, "replicasets");
+        detail.yaml = serde_yaml::to_string(&rs).unwrap_or_default();
+
+        if let Some(status) = &rs.status {
+            let ready = status.ready_replicas.unwrap_or(0);
+            detail.phase = format!("{ready}/{} ready", status.replicas);
+        }
+
+        if let Some(spec) = &rs.spec {
+            if let Some(selector) = &spec.selector.match_labels {
+                let label_selector = selector
+                    .iter()
+                    .map(|(k, v)| format!("{k}={v}"))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                detail.pods =
+                    Self::get_workload_pods(client.clone(), namespace, &label_selector).await;
+            }
+        }
+
+        detail.events = Self::get_resource_events(client, name, namespace).await;
+        Ok(detail)
+    }
+
+    async fn get_job_detail(
+        client: Client,
+        name: &str,
+        namespace: &str,
+    ) -> Result<ResourceDetail> {
+        let api: Api<Job> = Api::namespaced(client.clone(), namespace);
+        let job = api.get(name).await?;
+
+        let mut detail = Self::extract_metadata(&job.metadata, "jobs");
+        detail.yaml = serde_yaml::to_string(&job).unwrap_or_default();
+
+        if let Some(status) = &job.status {
+            let succeeded = status.succeeded.unwrap_or(0);
+            let completions = job.spec.as_ref().and_then(|s| s.completions).unwrap_or(1);
+            detail.phase = format!("{succeeded}/{completions} completed");
+
+            if let Some(conditions) = &status.conditions {
+                detail.conditions = conditions
+                    .iter()
+                    .map(|c| Condition {
+                        type_: c.type_.clone(),
+                        status: c.status.clone(),
+                        reason: c.reason.clone().unwrap_or_default(),
+                        message: c.message.clone().unwrap_or_default(),
+                        last_transition: c
+                            .last_transition_time
+                            .as_ref()
+                            .map(|ts| format_age(&ts.0))
+                            .unwrap_or_default(),
+                    })
+                    .collect();
+            }
+        }
+
+        // Fetch pods for this job
+        let label_selector = format!("job-name={name}");
+        detail.pods = Self::get_workload_pods(client.clone(), namespace, &label_selector).await;
+
+        detail.events = Self::get_resource_events(client, name, namespace).await;
+        Ok(detail)
+    }
+
+    async fn get_cronjob_detail(
+        client: Client,
+        name: &str,
+        namespace: &str,
+    ) -> Result<ResourceDetail> {
+        let api: Api<CronJob> = Api::namespaced(client.clone(), namespace);
+        let cj = api.get(name).await?;
+
+        let mut detail = Self::extract_metadata(&cj.metadata, "cronjobs");
+        detail.yaml = serde_yaml::to_string(&cj).unwrap_or_default();
+
+        if let Some(spec) = &cj.spec {
+            let suspended = spec.suspend.unwrap_or(false);
+            detail.phase = if suspended {
+                format!("Suspended ({})", spec.schedule)
+            } else {
+                format!("Active ({})", spec.schedule)
+            };
+        }
+
+        detail.events = Self::get_resource_events(client, name, namespace).await;
+        Ok(detail)
+    }
+
+    async fn get_node_detail(client: Client, name: &str) -> Result<ResourceDetail> {
+        let api: Api<Node> = Api::all(client.clone());
+        let node = api.get(name).await?;
+
+        let mut detail = Self::extract_metadata(&node.metadata, "nodes");
+        detail.yaml = serde_yaml::to_string(&node).unwrap_or_default();
+
+        if let Some(status) = &node.status {
+            detail.phase = status
+                .conditions
+                .as_ref()
+                .and_then(|conds| {
+                    conds
+                        .iter()
+                        .find(|c| c.type_ == "Ready")
+                        .map(|c| {
+                            if c.status == "True" {
+                                "Ready"
+                            } else {
+                                "NotReady"
+                            }
+                        })
+                })
+                .unwrap_or("Unknown")
+                .to_string();
+
+            if let Some(conditions) = &status.conditions {
+                detail.conditions = conditions
+                    .iter()
+                    .map(|c| Condition {
+                        type_: c.type_.clone(),
+                        status: c.status.clone(),
+                        reason: c.reason.clone().unwrap_or_default(),
+                        message: c.message.clone().unwrap_or_default(),
+                        last_transition: c
+                            .last_transition_time
+                            .as_ref()
+                            .map(|ts| format_age(&ts.0))
+                            .unwrap_or_default(),
+                    })
+                    .collect();
+            }
+        }
+
+        // Node events are cluster-scoped
+        let event_api: Api<Event> = Api::namespaced(client, "default");
+        let field_selector = format!("involvedObject.name={name}");
+        let lp = ListParams::default().fields(&field_selector);
+        if let Ok(events) = event_api.list(&lp).await {
+            detail.events = events
+                .items
+                .into_iter()
+                .map(|ev| EventEntry {
+                    type_: ev.type_.unwrap_or_default(),
+                    reason: ev.reason.unwrap_or_default(),
+                    age: ev
+                        .metadata
+                        .creation_timestamp
+                        .as_ref()
+                        .map(|ts| format_age(&ts.0))
+                        .unwrap_or_default(),
+                    from: ev.source.and_then(|s| s.component).unwrap_or_default(),
+                    message: ev.message.unwrap_or_default(),
+                })
+                .collect();
+        }
+
+        Ok(detail)
+    }
+
+    /// Generic detail for resource types without a specific handler
+    async fn get_generic_detail(
+        client: Client,
+        resource_type: &str,
+        name: &str,
+        namespace: &str,
+    ) -> Result<ResourceDetail> {
+        // Use dynamic API to get any resource as JSON
+        // For now, just fetch events and return a minimal detail
+        let events = Self::get_resource_events(client, name, namespace).await;
+        Ok(ResourceDetail {
+            name: name.to_string(),
+            namespace: Some(namespace.to_string()),
+            resource_type: resource_type.to_string(),
+            age: String::new(),
+            phase: String::new(),
+            labels: BTreeMap::new(),
+            annotations: BTreeMap::new(),
+            owner_references: vec![],
+            conditions: vec![],
+            containers: vec![],
+            pods: vec![],
+            yaml: String::new(),
+            events,
+        })
+    }
+
+    // ── List Methods ──────────────────────────────────────────────────
 
     async fn list_ingresses(client: Client, namespace: &str) -> Result<TableData> {
         let api: Api<Ingress> = Api::namespaced(client, namespace);

@@ -55,6 +55,11 @@ fn main() {
             KeyBinding::new("/", app::ActivateFilter, Some("app")),
             // Panel navigation
             KeyBinding::new("tab", app::ToggleSidebar, Some("app")),
+            // Detail tab switching
+            KeyBinding::new("1", app::DetailTab1, Some("app")),
+            KeyBinding::new("2", app::DetailTab2, Some("app")),
+            KeyBinding::new("3", app::DetailTab3, Some("app")),
+            KeyBinding::new("4", app::DetailTab4, Some("app")),
             // Namespace picker toggle
             KeyBinding::new("ctrl-n", app::ToggleNamespacePicker, Some("app")),
         ]);

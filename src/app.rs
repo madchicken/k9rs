@@ -1,8 +1,10 @@
 use gpui::*;
 
 use crate::k8s::{K8sClient, runtime::spawn_on_tokio};
+use crate::model::detail::{DetailTab, ResourceDetail};
 use crate::model::resources::{RESOURCES, resource_index};
 use crate::model::table::TableData;
+use crate::ui::detail_panel::DetailPanel;
 use crate::ui::header::Header;
 use crate::ui::namespace_picker::NamespacePicker;
 use crate::ui::resource_table::ResourceTable;
@@ -21,17 +23,19 @@ actions!(
         ToggleNamespacePicker,
         ToggleSidebar,
         Backspace,
+        DetailTab1,
+        DetailTab2,
+        DetailTab3,
+        DetailTab4,
     ]
 );
 
-/// Which panel has focus
 #[derive(Clone, Copy, PartialEq)]
 enum FocusPanel {
     Sidebar,
     Table,
 }
 
-/// Main application view — the root of the UI tree
 pub struct AppView {
     focus_handle: FocusHandle,
     active_panel: FocusPanel,
@@ -48,6 +52,14 @@ pub struct AppView {
     spinner_frame: usize,
     filter_mode: bool,
     filter_text: String,
+    // Detail view
+    detail_visible: bool,
+    detail_data: Option<ResourceDetail>,
+    detail_tab: DetailTab,
+    detail_loading: bool,
+    detail_logs: Option<String>,
+    detail_logs_loading: bool,
+    // Namespace picker
     ns_picker_visible: bool,
     ns_picker_loading: bool,
     ns_picker_list: Vec<String>,
@@ -88,6 +100,12 @@ impl AppView {
             spinner_frame: 0,
             filter_mode: false,
             filter_text: String::new(),
+            detail_visible: false,
+            detail_data: None,
+            detail_tab: DetailTab::Overview,
+            detail_loading: false,
+            detail_logs: None,
+            detail_logs_loading: false,
             ns_picker_visible: false,
             ns_picker_loading: false,
             ns_picker_list: vec![],
@@ -124,6 +142,9 @@ impl AppView {
         self.filter_text.clear();
         self.filter_mode = false;
         self.selected_row = 0;
+        self.detail_visible = false;
+        self.detail_data = None;
+        self.detail_logs = None;
         self.load_resource_data(cx);
     }
 
@@ -193,6 +214,105 @@ impl AppView {
         })
         .detach();
     }
+
+    // ── Detail view methods ──
+
+    fn open_detail(&mut self, cx: &mut Context<Self>) {
+        let filtered = self.filtered_rows();
+        let row = match filtered.get(self.selected_row) {
+            Some((_, row)) => row,
+            None => return,
+        };
+        let name = match row.cells.first() {
+            Some(name) => name.clone(),
+            None => return,
+        };
+
+        self.detail_visible = true;
+        self.detail_loading = true;
+        self.detail_data = None;
+        self.detail_tab = DetailTab::Overview;
+        self.detail_logs = None;
+        self.detail_logs_loading = false;
+
+        let resource_type = self.current_resource.clone();
+        let namespace = self.current_namespace.clone();
+
+        cx.spawn(async move |this, cx: &mut AsyncApp| {
+            let result = spawn_on_tokio(async move {
+                K8sClient::get_resource_detail(&resource_type, &name, &namespace).await
+            })
+            .await;
+
+            cx.update(|cx| {
+                this.update(cx, |this, cx| {
+                    this.detail_loading = false;
+                    match result {
+                        Ok(detail) => {
+                            this.detail_data = Some(detail);
+                        }
+                        Err(e) => {
+                            this.status_message = format!("Error: {e}");
+                            this.detail_visible = false;
+                        }
+                    }
+                    cx.notify();
+                })
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn close_detail(&mut self) {
+        self.detail_visible = false;
+        self.detail_data = None;
+        self.detail_logs = None;
+        self.detail_logs_loading = false;
+    }
+
+    fn switch_detail_tab(&mut self, tab: DetailTab, cx: &mut Context<Self>) {
+        self.detail_tab = tab;
+        if tab == DetailTab::Logs && self.detail_logs.is_none() && !self.detail_logs_loading {
+            self.load_detail_logs(cx);
+        }
+    }
+
+    fn load_detail_logs(&mut self, cx: &mut Context<Self>) {
+        let name = match &self.detail_data {
+            Some(d) if d.resource_type == "pods" => d.name.clone(),
+            _ => return,
+        };
+        let namespace = self.current_namespace.clone();
+
+        self.detail_logs_loading = true;
+
+        cx.spawn(async move |this, cx: &mut AsyncApp| {
+            let result = spawn_on_tokio(async move {
+                K8sClient::get_pod_logs(&name, &namespace, None, Some(500)).await
+            })
+            .await;
+
+            cx.update(|cx| {
+                this.update(cx, |this, cx| {
+                    this.detail_logs_loading = false;
+                    match result {
+                        Ok(logs) => {
+                            this.detail_logs = Some(logs);
+                        }
+                        Err(e) => {
+                            this.detail_logs = Some(format!("Error loading logs: {e}"));
+                        }
+                    }
+                    cx.notify();
+                })
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    // ── Selection / filtering ──
 
     fn filtered_rows(&self) -> Vec<(usize, &crate::model::table::TableRow)> {
         if self.filter_text.is_empty() {
@@ -306,15 +426,17 @@ const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦
 
 impl Render for AppView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // Animate spinner while loading
-        if self.loading {
+        // Animate spinner while anything is loading
+        let any_loading = self.loading || self.detail_loading || self.detail_logs_loading;
+        if any_loading {
             self.spinner_frame = (self.spinner_frame + 1) % SPINNER_FRAMES.len();
             cx.on_next_frame(window, |this, _window, cx| {
-                if this.loading {
+                if this.loading || this.detail_loading || this.detail_logs_loading {
                     cx.notify();
                 }
             });
         }
+
         let header = Header::new(
             &self.current_context,
             &self.current_namespace,
@@ -340,7 +462,6 @@ impl Render for AppView {
         );
         let loading_resource = self.current_resource.clone();
 
-        // WeakEntity for mouse click callbacks
         let weak = cx.weak_entity();
 
         let status = StatusBar::new(
@@ -374,15 +495,19 @@ impl Render for AppView {
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &ActivateFilter, _window, cx| {
-                this.filter_mode = true;
-                this.filter_text.clear();
-                this.selected_row = 0;
+                if !this.detail_visible {
+                    this.filter_mode = true;
+                    this.filter_text.clear();
+                    this.selected_row = 0;
+                }
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &GoBack, _window, cx| {
                 if this.ns_picker_visible {
                     this.ns_picker_visible = false;
                     this.ns_picker_filter.clear();
+                } else if this.detail_visible {
+                    this.close_detail();
                 } else if this.filter_mode {
                     this.filter_mode = false;
                     this.filter_text.clear();
@@ -404,8 +529,9 @@ impl Render for AppView {
                     this.filter_mode = false;
                 } else if this.command_mode {
                     this.handle_command(cx);
+                } else if this.detail_visible {
+                    // Enter in detail view does nothing extra
                 } else if this.active_panel == FocusPanel::Sidebar {
-                    // Select the resource from the sidebar
                     if let Some(entry) = RESOURCES.get(this.sidebar_selected) {
                         let api_name = entry.api_name.to_string();
                         this.active_panel = FocusPanel::Table;
@@ -418,6 +544,9 @@ impl Render for AppView {
                             this.switch_resource("pods", cx);
                         }
                     }
+                } else {
+                    // Open detail view for selected resource
+                    this.open_detail(cx);
                 }
                 cx.notify();
             }))
@@ -426,10 +555,12 @@ impl Render for AppView {
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &ToggleSidebar, _window, cx| {
-                this.active_panel = match this.active_panel {
-                    FocusPanel::Sidebar => FocusPanel::Table,
-                    FocusPanel::Table => FocusPanel::Sidebar,
-                };
+                if !this.detail_visible {
+                    this.active_panel = match this.active_panel {
+                        FocusPanel::Sidebar => FocusPanel::Table,
+                        FocusPanel::Table => FocusPanel::Sidebar,
+                    };
+                }
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &Backspace, _window, cx| {
@@ -443,6 +574,31 @@ impl Render for AppView {
                     this.command_input.pop();
                 }
                 cx.notify();
+            }))
+            // Detail tab switching (1-4)
+            .on_action(cx.listener(|this, _: &DetailTab1, _window, cx| {
+                if this.detail_visible {
+                    this.switch_detail_tab(DetailTab::Overview, cx);
+                    cx.notify();
+                }
+            }))
+            .on_action(cx.listener(|this, _: &DetailTab2, _window, cx| {
+                if this.detail_visible {
+                    this.switch_detail_tab(DetailTab::Yaml, cx);
+                    cx.notify();
+                }
+            }))
+            .on_action(cx.listener(|this, _: &DetailTab3, _window, cx| {
+                if this.detail_visible {
+                    this.switch_detail_tab(DetailTab::Events, cx);
+                    cx.notify();
+                }
+            }))
+            .on_action(cx.listener(|this, _: &DetailTab4, _window, cx| {
+                if this.detail_visible {
+                    this.switch_detail_tab(DetailTab::Logs, cx);
+                    cx.notify();
+                }
             }))
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _window, cx| {
                 if this.ns_picker_visible {
@@ -464,15 +620,16 @@ impl Render for AppView {
             }))
             // Header
             .child(header.into_element())
-            // Body: sidebar + table
+            // Body: sidebar + content
             .child({
                 let weak_sidebar = weak.clone();
                 let weak_table = weak.clone();
-                div()
+                let detail_visible = self.detail_visible;
+
+                let mut body = div()
                     .flex()
                     .flex_1()
                     .overflow_hidden()
-                    // Sidebar with click handlers
                     .child(sidebar.into_element_with_clicks(
                         move |idx, _ev, _window, cx| {
                             weak_sidebar.update(cx, |this, cx| {
@@ -483,9 +640,61 @@ impl Render for AppView {
                                 cx.notify();
                             }).ok();
                         },
-                    ))
-                    // Table area (with loading spinner or data)
-                    .child(if loading {
+                    ));
+
+                if detail_visible {
+                    // Detail panel
+                    if self.detail_loading {
+                        body = body.child(
+                            div()
+                                .flex_1()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .items_center()
+                                        .gap_2()
+                                        .child(
+                                            div()
+                                                .text_xl()
+                                                .text_color(rgb(0x89b4fa))
+                                                .child(spinner_text.clone()),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_color(rgb(0x6c7086))
+                                                .child("Loading details..."),
+                                        ),
+                                ),
+                        );
+                    } else if let Some(detail) = &self.detail_data {
+                        let panel = DetailPanel::new(
+                            detail,
+                            self.detail_tab,
+                            self.detail_logs.as_deref(),
+                            self.detail_logs_loading,
+                            SPINNER_FRAMES[self.spinner_frame % SPINNER_FRAMES.len()],
+                        );
+                        let weak_detail = weak.clone();
+                        body = body.child(
+                            div()
+                                .flex_1()
+                                .overflow_hidden()
+                                .child(panel.into_element_with_clicks(
+                                    move |tab, _ev, _window, cx| {
+                                        weak_detail.update(cx, |this, cx| {
+                                            this.switch_detail_tab(tab, cx);
+                                            cx.notify();
+                                        }).ok();
+                                    },
+                                )),
+                        );
+                    }
+                } else if loading {
+                    body = body.child(
                         div()
                             .id("table-scroll")
                             .flex_1()
@@ -509,8 +718,10 @@ impl Render for AppView {
                                             .text_color(rgb(0x6c7086))
                                             .child(SharedString::from(format!("Loading {}...", loading_resource))),
                                     ),
-                            )
-                    } else {
+                            ),
+                    );
+                } else {
+                    body = body.child(
                         div()
                             .id("table-scroll")
                             .flex_1()
@@ -520,11 +731,15 @@ impl Render for AppView {
                                     weak_table.update(cx, |this, cx| {
                                         this.selected_row = idx;
                                         this.active_panel = FocusPanel::Table;
+                                        this.open_detail(cx);
                                         cx.notify();
                                     }).ok();
                                 },
-                            ))
-                    })
+                            )),
+                    );
+                }
+
+                body
             })
             // Status bar
             .child(status.into_element());
