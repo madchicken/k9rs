@@ -44,9 +44,12 @@ pub struct AppView {
     command_input: String,
     command_mode: bool,
     status_message: String,
+    loading: bool,
+    spinner_frame: usize,
     filter_mode: bool,
     filter_text: String,
     ns_picker_visible: bool,
+    ns_picker_loading: bool,
     ns_picker_list: Vec<String>,
     ns_picker_selected: usize,
     ns_picker_filter: String,
@@ -81,9 +84,12 @@ impl AppView {
             command_input: String::new(),
             command_mode: false,
             status_message: "Connecting to cluster...".to_string(),
+            loading: false,
+            spinner_frame: 0,
             filter_mode: false,
             filter_text: String::new(),
             ns_picker_visible: false,
+            ns_picker_loading: false,
             ns_picker_list: vec![],
             ns_picker_selected: 0,
             ns_picker_filter: String::new(),
@@ -122,6 +128,8 @@ impl AppView {
     }
 
     fn load_resource_data(&mut self, cx: &mut Context<Self>) {
+        self.loading = true;
+        self.spinner_frame = 0;
         let resource = self.current_resource.clone();
         let namespace = self.current_namespace.clone();
 
@@ -133,6 +141,7 @@ impl AppView {
 
             cx.update(|cx| {
                 this.update(cx, |this, cx| {
+                    this.loading = false;
                     match result {
                         Ok(data) => {
                             this.table_data = data;
@@ -153,6 +162,7 @@ impl AppView {
     }
 
     fn load_namespaces(&mut self, cx: &mut Context<Self>) {
+        self.ns_picker_loading = true;
         cx.spawn(async move |this, cx: &mut AsyncApp| {
             let result = spawn_on_tokio(async move {
                 K8sClient::list_namespace_names().await
@@ -161,6 +171,7 @@ impl AppView {
 
             cx.update(|cx| {
                 this.update(cx, |this, cx| {
+                    this.ns_picker_loading = false;
                     match result {
                         Ok(mut names) => {
                             names.sort();
@@ -291,8 +302,19 @@ impl AppView {
     }
 }
 
+const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
 impl Render for AppView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Animate spinner while loading
+        if self.loading {
+            self.spinner_frame = (self.spinner_frame + 1) % SPINNER_FRAMES.len();
+            cx.on_next_frame(window, |this, _window, cx| {
+                if this.loading {
+                    cx.notify();
+                }
+            });
+        }
         let header = Header::new(
             &self.current_context,
             &self.current_namespace,
@@ -311,6 +333,15 @@ impl Render for AppView {
             self.sidebar_selected,
             self.active_panel == FocusPanel::Sidebar,
         );
+
+        let loading = self.loading;
+        let spinner_text = SharedString::from(
+            SPINNER_FRAMES[self.spinner_frame % SPINNER_FRAMES.len()],
+        );
+        let loading_resource = self.current_resource.clone();
+
+        // WeakEntity for mouse click callbacks
+        let weak = cx.weak_entity();
 
         let status = StatusBar::new(
             &self.status_message,
@@ -434,22 +465,67 @@ impl Render for AppView {
             // Header
             .child(header.into_element())
             // Body: sidebar + table
-            .child(
+            .child({
+                let weak_sidebar = weak.clone();
+                let weak_table = weak.clone();
                 div()
                     .flex()
                     .flex_1()
                     .overflow_hidden()
-                    // Sidebar
-                    .child(sidebar.into_element())
-                    // Table
-                    .child(
+                    // Sidebar with click handlers
+                    .child(sidebar.into_element_with_clicks(
+                        move |idx, _ev, _window, cx| {
+                            weak_sidebar.update(cx, |this, cx| {
+                                if let Some(entry) = RESOURCES.get(idx) {
+                                    this.switch_resource(entry.api_name, cx);
+                                    this.active_panel = FocusPanel::Table;
+                                }
+                                cx.notify();
+                            }).ok();
+                        },
+                    ))
+                    // Table area (with loading spinner or data)
+                    .child(if loading {
+                        div()
+                            .id("table-scroll")
+                            .flex_1()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .text_xl()
+                                            .text_color(rgb(0x89b4fa))
+                                            .child(spinner_text.clone()),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_color(rgb(0x6c7086))
+                                            .child(SharedString::from(format!("Loading {}...", loading_resource))),
+                                    ),
+                            )
+                    } else {
                         div()
                             .id("table-scroll")
                             .flex_1()
                             .overflow_y_scroll()
-                            .child(table.into_element()),
-                    ),
-            )
+                            .child(table.into_element_with_clicks(
+                                move |idx, _ev, _window, cx| {
+                                    weak_table.update(cx, |this, cx| {
+                                        this.selected_row = idx;
+                                        this.active_panel = FocusPanel::Table;
+                                        cx.notify();
+                                    }).ok();
+                                },
+                            ))
+                    })
+            })
             // Status bar
             .child(status.into_element());
 
@@ -460,6 +536,8 @@ impl Render for AppView {
                 self.ns_picker_selected,
                 &self.ns_picker_filter,
                 &self.current_namespace,
+                self.ns_picker_loading,
+                &spinner_text,
             );
             root = root.child(picker.into_element());
         }

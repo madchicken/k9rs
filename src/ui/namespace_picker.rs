@@ -6,6 +6,8 @@ pub struct NamespacePicker {
     selected: usize,
     filter: String,
     current_namespace: String,
+    loading: bool,
+    spinner: String,
 }
 
 impl NamespacePicker {
@@ -14,17 +16,20 @@ impl NamespacePicker {
         selected: usize,
         filter: &str,
         current_namespace: &str,
+        loading: bool,
+        spinner: &str,
     ) -> Self {
         Self {
             namespaces: namespaces.to_vec(),
             selected,
             filter: filter.to_string(),
             current_namespace: current_namespace.to_string(),
+            loading,
+            spinner: spinner.to_string(),
         }
     }
 
     pub fn into_element(self) -> Div {
-        // Overlay container — centered on screen
         div()
             .absolute()
             .top_8()
@@ -90,17 +95,33 @@ impl NamespacePicker {
         // Namespace list
         let mut list = div().flex().flex_col();
 
-        if self.namespaces.is_empty() {
+        if self.loading {
+            list = list.child(
+                div()
+                    .px_3()
+                    .py_4()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_color(rgb(0x89b4fa))
+                            .child(SharedString::from(self.spinner)),
+                    )
+                    .child(
+                        div()
+                            .text_color(rgb(0x6c7086))
+                            .child("Loading namespaces..."),
+                    ),
+            );
+        } else if self.namespaces.is_empty() {
             list = list.child(
                 div()
                     .px_3()
                     .py_2()
                     .text_color(rgb(0x6c7086))
-                    .child(if self.filter.is_empty() {
-                        "Loading namespaces..."
-                    } else {
-                        "No matching namespaces"
-                    }),
+                    .child("No matching namespaces"),
             );
         } else {
             for (i, ns) in self.namespaces.iter().enumerate() {
@@ -114,7 +135,7 @@ impl NamespacePicker {
                 };
 
                 let text_color = if is_current {
-                    rgb(0xa6e3a1) // Green for current
+                    rgb(0xa6e3a1)
                 } else if is_selected {
                     rgb(0xcdd6f4)
                 } else {

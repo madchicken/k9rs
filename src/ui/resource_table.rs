@@ -38,7 +38,11 @@ impl ResourceTable {
         row
     }
 
-    fn render_data_row(&self, row_idx: usize) -> Div {
+    fn render_data_row(
+        &self,
+        row_idx: usize,
+        on_click: Option<std::rc::Rc<dyn Fn(usize, &MouseDownEvent, &mut Window, &mut App)>>,
+    ) -> Div {
         let row_data = &self.data.rows[row_idx];
         let is_selected = row_idx == self.selected_row;
 
@@ -63,7 +67,15 @@ impl ResourceTable {
             .py_px()
             .bg(bg)
             .text_color(text_color)
-            .gap_2();
+            .gap_2()
+            .cursor_pointer()
+            .hover(|s| s.bg(rgb(0x45475a)));
+
+        if let Some(cb) = on_click {
+            row = row.on_mouse_down(MouseButton::Left, move |ev, window, cx| {
+                cb(row_idx, ev, window, cx);
+            });
+        }
 
         for (i, cell) in row_data.cells.iter().enumerate() {
             let min_w = self
@@ -84,7 +96,12 @@ impl ResourceTable {
         row
     }
 
-    pub fn into_element(self) -> Div {
+    /// Build the table with click handlers on rows.
+    pub fn into_element_with_clicks(
+        self,
+        on_row_click: impl Fn(usize, &MouseDownEvent, &mut Window, &mut App) + 'static,
+    ) -> Div {
+        let on_row_click = std::rc::Rc::new(on_row_click);
         let mut table = div().flex().flex_col().w_full();
 
         // Header
@@ -94,7 +111,7 @@ impl ResourceTable {
 
         // Data rows
         for i in 0..self.data.rows.len() {
-            table = table.child(self.render_data_row(i));
+            table = table.child(self.render_data_row(i, Some(on_row_click.clone())));
         }
 
         // Empty state

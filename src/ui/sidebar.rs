@@ -2,7 +2,8 @@ use gpui::*;
 
 use crate::model::resources::RESOURCES;
 
-/// Left sidebar showing available resource types grouped by category
+/// Left sidebar showing available resource types grouped by category.
+/// `on_click` closures are wired externally via `with_click_handlers`.
 pub struct Sidebar {
     current_resource: String,
     selected_index: usize,
@@ -18,7 +19,14 @@ impl Sidebar {
         }
     }
 
-    pub fn into_element(self) -> Div {
+    /// Build the sidebar element with click handlers.
+    /// `on_item_click` is called with the resource index when an item is clicked.
+    pub fn into_element_with_clicks(
+        self,
+        on_item_click: impl Fn(usize, &MouseDownEvent, &mut Window, &mut App) + 'static,
+    ) -> Div {
+        let on_item_click = std::rc::Rc::new(on_item_click);
+
         let mut sidebar = div()
             .flex()
             .flex_col()
@@ -32,7 +40,6 @@ impl Sidebar {
         let mut current_category = "";
 
         for (i, entry) in RESOURCES.iter().enumerate() {
-            // Render category header when it changes
             if entry.category != current_category {
                 current_category = entry.category;
                 sidebar = sidebar.child(
@@ -67,6 +74,7 @@ impl Sidebar {
 
             let indicator = if is_active { "›" } else { " " };
 
+            let cb = on_item_click.clone();
             sidebar = sidebar.child(
                 div()
                     .px_3()
@@ -76,6 +84,11 @@ impl Sidebar {
                     .text_sm()
                     .flex()
                     .gap_1()
+                    .cursor_pointer()
+                    .hover(|s| s.bg(rgb(0x45475a)))
+                    .on_mouse_down(MouseButton::Left, move |ev, window, cx| {
+                        cb(i, ev, window, cx);
+                    })
                     .child(
                         div()
                             .w(px(10.0))
