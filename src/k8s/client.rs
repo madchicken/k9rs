@@ -955,7 +955,7 @@ impl K8sClient {
         let pod = api.get(name).await?;
 
         let mut detail = Self::extract_metadata(&pod.metadata, "pods");
-        detail.yaml = serde_yaml::to_string(&pod).unwrap_or_default();
+        detail.yaml = serde_yml::to_string(&pod).unwrap_or_default();
 
         if let Some(status) = &pod.status {
             detail.phase = status.phase.clone().unwrap_or_else(|| "Unknown".into());
@@ -1049,7 +1049,7 @@ impl K8sClient {
         let dep = api.get(name).await?;
 
         let mut detail = Self::extract_metadata(&dep.metadata, "deployments");
-        detail.yaml = serde_yaml::to_string(&dep).unwrap_or_default();
+        detail.yaml = serde_yml::to_string(&dep).unwrap_or_default();
 
         if let Some(status) = &dep.status {
             let ready = status.ready_replicas.unwrap_or(0);
@@ -1138,7 +1138,7 @@ impl K8sClient {
         let svc = api.get(name).await?;
 
         let mut detail = Self::extract_metadata(&svc.metadata, "services");
-        detail.yaml = serde_yaml::to_string(&svc).unwrap_or_default();
+        detail.yaml = serde_yml::to_string(&svc).unwrap_or_default();
 
         if let Some(spec) = &svc.spec {
             detail.phase = spec.type_.clone().unwrap_or_else(|| "ClusterIP".into());
@@ -1157,7 +1157,7 @@ impl K8sClient {
         let sts = api.get(name).await?;
 
         let mut detail = Self::extract_metadata(&sts.metadata, "statefulsets");
-        detail.yaml = serde_yaml::to_string(&sts).unwrap_or_default();
+        detail.yaml = serde_yml::to_string(&sts).unwrap_or_default();
 
         if let Some(status) = &sts.status {
             let ready = status.ready_replicas.unwrap_or(0);
@@ -1209,7 +1209,7 @@ impl K8sClient {
         let ds = api.get(name).await?;
 
         let mut detail = Self::extract_metadata(&ds.metadata, "daemonsets");
-        detail.yaml = serde_yaml::to_string(&ds).unwrap_or_default();
+        detail.yaml = serde_yml::to_string(&ds).unwrap_or_default();
 
         if let Some(status) = &ds.status {
             detail.phase = format!(
@@ -1244,7 +1244,7 @@ impl K8sClient {
         let rs = api.get(name).await?;
 
         let mut detail = Self::extract_metadata(&rs.metadata, "replicasets");
-        detail.yaml = serde_yaml::to_string(&rs).unwrap_or_default();
+        detail.yaml = serde_yml::to_string(&rs).unwrap_or_default();
 
         if let Some(status) = &rs.status {
             let ready = status.ready_replicas.unwrap_or(0);
@@ -1276,7 +1276,7 @@ impl K8sClient {
         let job = api.get(name).await?;
 
         let mut detail = Self::extract_metadata(&job.metadata, "jobs");
-        detail.yaml = serde_yaml::to_string(&job).unwrap_or_default();
+        detail.yaml = serde_yml::to_string(&job).unwrap_or_default();
 
         if let Some(status) = &job.status {
             let succeeded = status.succeeded.unwrap_or(0);
@@ -1318,7 +1318,7 @@ impl K8sClient {
         let cj = api.get(name).await?;
 
         let mut detail = Self::extract_metadata(&cj.metadata, "cronjobs");
-        detail.yaml = serde_yaml::to_string(&cj).unwrap_or_default();
+        detail.yaml = serde_yml::to_string(&cj).unwrap_or_default();
 
         if let Some(spec) = &cj.spec {
             let suspended = spec.suspend.unwrap_or(false);
@@ -1338,7 +1338,7 @@ impl K8sClient {
         let node = api.get(name).await?;
 
         let mut detail = Self::extract_metadata(&node.metadata, "nodes");
-        detail.yaml = serde_yaml::to_string(&node).unwrap_or_default();
+        detail.yaml = serde_yml::to_string(&node).unwrap_or_default();
 
         if let Some(status) = &node.status {
             detail.phase = status
@@ -1425,7 +1425,7 @@ impl K8sClient {
             .meta()
             .clone();
         let mut detail = Self::extract_metadata(&meta, resource_type);
-        detail.yaml = serde_yaml::to_string(&resource).unwrap_or_default();
+        detail.yaml = serde_yml::to_string(&resource).unwrap_or_default();
         detail.events = Self::get_resource_events(client, name, namespace).await;
         Ok(detail)
     }
@@ -1435,7 +1435,7 @@ impl K8sClient {
         let api: Api<PersistentVolume> = Api::all(client.clone());
         let pv = api.get(name).await?;
         let mut detail = Self::extract_metadata(&pv.metadata, "persistentvolumes");
-        detail.yaml = serde_yaml::to_string(&pv).unwrap_or_default();
+        detail.yaml = serde_yml::to_string(&pv).unwrap_or_default();
         if let Some(status) = &pv.status {
             detail.phase = status.phase.clone().unwrap_or_default();
         }
@@ -1447,7 +1447,7 @@ impl K8sClient {
         let api: Api<Namespace> = Api::all(client.clone());
         let ns = api.get(name).await?;
         let mut detail = Self::extract_metadata(&ns.metadata, "namespaces");
-        detail.yaml = serde_yaml::to_string(&ns).unwrap_or_default();
+        detail.yaml = serde_yml::to_string(&ns).unwrap_or_default();
         if let Some(status) = &ns.status {
             detail.phase = status.phase.clone().unwrap_or_default();
         }

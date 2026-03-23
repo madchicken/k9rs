@@ -15,6 +15,7 @@ A GPU-accelerated Kubernetes CLI manager written in Rust, inspired by [k9s](http
   - **Events** — related events in tabular format
   - **Logs** — pod log viewer (last 500 lines, loaded on demand)
 - **YAML editing** — edit resource YAML in-place with syntax highlighting, then apply with `Ctrl+S`
+- **Port forwarding** — press `f` on a pod to start a port forward, manage active forwards via `:pf`
 - **Namespace switching** — picker overlay with type-to-filter (`Ctrl+N`) or via `:ns` command
 - **Resource filtering** — press `/` to filter table rows across all columns
 - **Command mode** — k9s-style `:` commands with aliases (`po`, `deploy`, `svc`, `ns`, etc.)
@@ -79,6 +80,7 @@ k9rs -n monitoring -r services -c production
 | `/` | Activate filter mode (type to filter rows) |
 | `Ctrl+N` | Open namespace picker |
 | `r` | Restart selected resource |
+| `f` | Port forward selected pod |
 | `Ctrl+S` | Apply edited YAML (in YAML tab) |
 | `Cmd+Q` | Quit |
 
@@ -91,6 +93,23 @@ k9rs -n monitoring -r services -c production
 | `3` | Events tab |
 | `4` | Logs tab |
 | `Esc` | Close detail view |
+
+### Port Forward Dialog
+
+| Key | Action |
+|-----|--------|
+| `j` / `k` | Select remote port |
+| Type digits | Set local port |
+| `Enter` | Start port forward |
+| `Esc` | Cancel |
+
+### Port Forward List (`:pf`)
+
+| Key | Action |
+|-----|--------|
+| `j` / `k` | Navigate forwards |
+| `d` | Stop selected forward |
+| `Esc` | Close list |
 
 ### Resource Aliases (Command Mode)
 
@@ -113,6 +132,7 @@ k9rs -n monitoring -r services -c production
 | `ev` | Events |
 | `cj` | CronJobs |
 | `job` | Jobs |
+| `pf` | Port Forwards (list) |
 
 ## Architecture
 
@@ -121,19 +141,22 @@ src/
 ├── main.rs              # Entry point, window setup, keybindings, theme
 ├── app.rs               # AppView — main state machine and render logic
 ├── k8s/
-│   ├── client.rs        # Kubernetes API client (list, detail, logs, restart, apply)
+│   ├── client.rs        # Kubernetes API client (list, detail, logs, restart, apply, port-forward)
 │   └── runtime.rs       # Tokio runtime bridge for async k8s calls in GPUI
 ├── model/
 │   ├── detail.rs        # ResourceDetail, PodInfo, ContainerInfo, etc.
+│   ├── port_forward.rs  # PortForwardEntry, PodPort, PortForwardStatus
 │   ├── resources.rs     # Resource type definitions and sidebar categories
 │   └── table.rs         # TableData, TableRow, TableColumn
 └── ui/
-    ├── detail_panel.rs  # Detail view with tabs (Overview, YAML, Events, Logs)
-    ├── header.rs        # Top bar (context, namespace, resource)
-    ├── namespace_picker.rs  # Modal namespace selector
-    ├── resource_table.rs    # Main resource table with click support
-    ├── sidebar.rs       # Left panel with resource categories
-    └── status_bar.rs    # Bottom bar (status, commands, filter)
+    ├── detail_panel.rs       # Detail view with tabs (Overview, YAML, Events, Logs)
+    ├── header.rs             # Top bar (context, namespace, resource)
+    ├── namespace_picker.rs   # Modal namespace selector
+    ├── port_forward_dialog.rs # Modal port-forward setup dialog
+    ├── port_forward_list.rs  # Modal active port-forwards list
+    ├── resource_table.rs     # Main resource table with click support
+    ├── sidebar.rs            # Left panel with resource categories
+    └── status_bar.rs         # Bottom bar (status, commands, filter)
 ```
 
 ### Key Design Decisions
@@ -142,6 +165,7 @@ src/
 - **GPUI Root wrapper**: The `gpui-component` library requires its `Root` view as the window root. Our `AppView` is wrapped inside it.
 - **Focus-based key dispatch**: GPUI dispatches key bindings based on focus context. The app root tracks focus via `FocusHandle` + `track_focus()`.
 - **Explicit `cx.notify()`**: GPUI doesn't auto-notify on state changes — every mutation must call `cx.notify()` to trigger re-render.
+- **Port forwarding**: Uses `kubectl port-forward` as a background process with `kill_on_drop` for clean lifecycle management.
 
 ## Tech Stack
 
@@ -152,7 +176,7 @@ src/
 | Kubernetes Client | [kube](https://crates.io/crates/kube) + [k8s-openapi](https://crates.io/crates/k8s-openapi) |
 | Async Runtime | [tokio](https://crates.io/crates/tokio) |
 | CLI Parsing | [clap](https://crates.io/crates/clap) |
-| Serialization | [serde](https://crates.io/crates/serde) + [serde_yaml](https://crates.io/crates/serde_yaml) |
+| Serialization | [serde](https://crates.io/crates/serde) + [serde_yml](https://crates.io/crates/serde_yml) |
 
 ## License
 
