@@ -1,4 +1,5 @@
 use gpui::*;
+use gpui_component::input::{Input, InputState};
 
 use crate::model::detail::{DetailTab, ResourceDetail};
 
@@ -9,6 +10,8 @@ pub struct DetailPanel {
     logs: Option<String>,
     logs_loading: bool,
     spinner: String,
+    can_restart: bool,
+    yaml_editor: Option<Entity<InputState>>,
 }
 
 impl DetailPanel {
@@ -18,6 +21,8 @@ impl DetailPanel {
         logs: Option<&str>,
         logs_loading: bool,
         spinner: &str,
+        can_restart: bool,
+        yaml_editor: Option<Entity<InputState>>,
     ) -> Self {
         Self {
             detail: detail.clone(),
@@ -25,40 +30,50 @@ impl DetailPanel {
             logs: logs.map(|s| s.to_string()),
             logs_loading,
             spinner: spinner.to_string(),
+            can_restart,
+            yaml_editor,
         }
     }
 
     pub fn into_element_with_clicks(
         self,
         on_tab_click: impl Fn(DetailTab, &MouseDownEvent, &mut Window, &mut App) + 'static,
+        on_restart: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
+        on_pod_click: impl Fn(String, &MouseDownEvent, &mut Window, &mut App) + 'static,
     ) -> Div {
-        let tab_bar = self.render_tab_bar(on_tab_click);
+        let tab_bar = self.render_tab_bar(on_tab_click, on_restart);
+        let on_pod_click = std::rc::Rc::new(on_pod_click);
+        let is_yaml_editor = self.active_tab == DetailTab::Yaml && self.yaml_editor.is_some();
         let tab_content = match self.active_tab {
-            DetailTab::Overview => self.render_overview(),
+            DetailTab::Overview => self.render_overview(Some(on_pod_click)),
             DetailTab::Yaml => self.render_yaml(),
             DetailTab::Events => self.render_events(),
             DetailTab::Logs => self.render_logs(),
         };
-        div()
-            .flex()
-            .flex_col()
-            .w_full()
-            .h_full()
-            // Tab bar stays fixed at top
-            .child(tab_bar)
-            // Content area scrolls
-            .child(
+
+        let mut root = div().flex().flex_col().w_full().h_full().child(tab_bar);
+
+        if is_yaml_editor {
+            // YAML editor manages its own scrolling — don't wrap in scroll container
+            root = root.child(div().flex_1().overflow_hidden().child(tab_content));
+        } else {
+            // Other tabs use external scroll
+            root = root.child(
                 div()
                     .id("detail-content-scroll")
                     .flex_1()
                     .overflow_y_scroll()
                     .child(tab_content),
-            )
+            );
+        }
+
+        root
     }
 
     fn render_tab_bar(
         &self,
         on_tab_click: impl Fn(DetailTab, &MouseDownEvent, &mut Window, &mut App) + 'static,
+        on_restart: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
     ) -> Div {
         let on_tab_click = std::rc::Rc::new(on_tab_click);
 
@@ -117,20 +132,46 @@ impl DetailPanel {
             );
         }
 
-        bar = bar.child(
+        // Right side: restart button + resource name
+        let mut right = div().flex_1().flex().justify_end().items_center().gap_2();
+
+        if self.can_restart {
+            right = right.child(
+                div()
+                    .px_2()
+                    .py_px()
+                    .bg(rgb(0xf38ba8))
+                    .text_color(rgb(0x1e1e2e))
+                    .text_xs()
+                    .rounded_sm()
+                    .cursor_pointer()
+                    .hover(|s| s.bg(rgb(0xeba0ac)))
+                    .on_mouse_down(MouseButton::Left, move |ev, window, cx| {
+                        on_restart(ev, window, cx);
+                    })
+                    .flex()
+                    .gap_1()
+                    .child("↻ Restart")
+                    .child(div().text_color(rgba(0x1e1e2eaa)).child("(r)")),
+            );
+        }
+
+        right = right.child(
             div()
-                .flex_1()
-                .flex()
-                .justify_end()
                 .text_color(rgb(0xf9e2af))
                 .text_sm()
                 .child(SharedString::from(self.detail.name.clone())),
         );
 
+        bar = bar.child(right);
+
         bar
     }
 
-    fn render_overview(&self) -> Div {
+    fn render_overview(
+        &self,
+        on_pod_click: Option<std::rc::Rc<dyn Fn(String, &MouseDownEvent, &mut Window, &mut App)>>,
+    ) -> Div {
         let mut content = div().flex().flex_col().w_full().p_3().gap_2();
 
         // Status header
@@ -310,41 +351,29 @@ impl DetailPanel {
                             .text_sm()
                             .text_color(rgb(0x6c7086))
                             .child(
-                                div()
-                                    .flex()
-                                    .gap_1()
-                                    .child("Image:")
-                                    .child(
-                                        div()
-                                            .text_color(rgb(0xbac2de))
-                                            .child(SharedString::from(c.image.clone())),
-                                    ),
+                                div().flex().gap_1().child("Image:").child(
+                                    div()
+                                        .text_color(rgb(0xbac2de))
+                                        .child(SharedString::from(c.image.clone())),
+                                ),
                             )
                             .child(
-                                div()
-                                    .flex()
-                                    .gap_1()
-                                    .child("Ready:")
-                                    .child(
-                                        div()
-                                            .text_color(if c.ready {
-                                                rgb(0xa6e3a1)
-                                            } else {
-                                                rgb(0xf38ba8)
-                                            })
-                                            .child(if c.ready { "Yes" } else { "No" }),
-                                    ),
+                                div().flex().gap_1().child("Ready:").child(
+                                    div()
+                                        .text_color(if c.ready {
+                                            rgb(0xa6e3a1)
+                                        } else {
+                                            rgb(0xf38ba8)
+                                        })
+                                        .child(if c.ready { "Yes" } else { "No" }),
+                                ),
                             )
                             .child(
-                                div()
-                                    .flex()
-                                    .gap_1()
-                                    .child("Restarts:")
-                                    .child(
-                                        div()
-                                            .text_color(rgb(0xbac2de))
-                                            .child(SharedString::from(c.restart_count.to_string())),
-                                    ),
+                                div().flex().gap_1().child("Restarts:").child(
+                                    div()
+                                        .text_color(rgb(0xbac2de))
+                                        .child(SharedString::from(c.restart_count.to_string())),
+                                ),
                             ),
                     );
 
@@ -373,15 +402,18 @@ impl DetailPanel {
         if !self.detail.pods.is_empty() {
             content = content.child(self.render_section(
                 &format!("Pods ({})", self.detail.pods.len()),
-                self.render_pods_table(),
+                self.render_pods_table(on_pod_click),
             ));
         }
 
         content
     }
 
-    fn render_pods_table(&self) -> Div {
-        let col_widths: &[(& str, f32)] = &[
+    fn render_pods_table(
+        &self,
+        on_pod_click: Option<std::rc::Rc<dyn Fn(String, &MouseDownEvent, &mut Window, &mut App)>>,
+    ) -> Div {
+        let col_widths: &[(&str, f32)] = &[
             ("NAME", 220.0),
             ("READY", 55.0),
             ("STATUS", 80.0),
@@ -433,11 +465,14 @@ impl DetailPanel {
                 (pod.status.clone().into(), status_color),
                 (pod.cpu.clone().into(), rgb(0xbac2de)),
                 (pod.memory.clone().into(), rgb(0xbac2de)),
-                (pod.restarts.to_string().into(), if pod.restarts > 0 {
-                    rgb(0xf9e2af)
-                } else {
-                    rgb(0xbac2de)
-                }),
+                (
+                    pod.restarts.to_string().into(),
+                    if pod.restarts > 0 {
+                        rgb(0xf9e2af)
+                    } else {
+                        rgb(0xbac2de)
+                    },
+                ),
                 (pod.last_restart_time.clone().into(), rgb(0x6c7086)),
                 (pod.last_restart_reason.clone().into(), rgb(0x6c7086)),
                 (pod.node.clone().into(), rgb(0x6c7086)),
@@ -445,22 +480,38 @@ impl DetailPanel {
                 (pod.age.clone().into(), rgb(0x6c7086)),
             ];
 
-            let mut row = div()
-                .flex()
-                .gap_1()
-                .py_px()
-                .bg(bg)
-                .text_sm();
+            let mut row = div().flex().gap_1().py_px().bg(bg).text_sm();
 
             for (j, (text, color)) in cells.into_iter().enumerate() {
                 let w = col_widths[j].1;
-                row = row.child(
-                    div()
+                if j == 0 {
+                    // NAME column — clickable link
+                    let mut name_cell = div()
                         .w(px(w))
-                        .text_color(color)
+                        .text_color(rgb(0x89b4fa))
                         .overflow_x_hidden()
-                        .child(text),
-                );
+                        .cursor_pointer()
+                        .hover(|s| s.text_color(rgb(0xb4d0fb)));
+
+                    if let Some(cb) = &on_pod_click {
+                        let cb = cb.clone();
+                        let pod_name = pod.name.clone();
+                        name_cell =
+                            name_cell.on_mouse_down(MouseButton::Left, move |ev, window, cx| {
+                                cb(pod_name.clone(), ev, window, cx);
+                            });
+                    }
+
+                    row = row.child(name_cell.child(text));
+                } else {
+                    row = row.child(
+                        div()
+                            .w(px(w))
+                            .text_color(color)
+                            .overflow_x_hidden()
+                            .child(text),
+                    );
+                }
             }
 
             table = table.child(row);
@@ -477,59 +528,55 @@ impl DetailPanel {
                 .child("No YAML available");
         }
 
-        let mut content = div()
-            .flex()
-            .flex_col()
-            .p_3()
-            .font_family("Monaco");
-        for line in self.detail.yaml.lines() {
-            let (key_part, val_part) = if let Some(colon_pos) = line.find(':') {
-                let leading_spaces = line.len() - line.trim_start().len();
-                if leading_spaces < colon_pos && !line.trim_start().starts_with('-') {
-                    (
-                        Some(&line[..colon_pos + 1]),
-                        Some(&line[colon_pos + 1..]),
-                    )
-                } else {
-                    (None, None)
-                }
-            } else {
-                (None, None)
-            };
-
-            let row = if let (Some(key), Some(val)) = (key_part, val_part) {
-                div()
-                    .flex()
-                    .child(
-                        div()
-                            .text_color(rgb(0x89b4fa))
-                            .text_sm()
-                            .child(SharedString::from(key.to_string())),
-                    )
-                    .child(
-                        div()
-                            .text_color(rgb(0xa6e3a1))
-                            .text_sm()
-                            .child(SharedString::from(val.to_string())),
-                    )
-            } else {
-                div()
-                    .text_color(rgb(0xcdd6f4))
-                    .text_sm()
-                    .child(SharedString::from(line.to_string()))
-            };
-
-            content = content.child(row);
+        if let Some(editor) = &self.yaml_editor {
+            // Use the code editor component
+            div()
+                .flex()
+                .flex_col()
+                .size_full()
+                .child(
+                    div()
+                        .px_3()
+                        .py_1()
+                        .bg(rgb(0x313244))
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .text_xs()
+                        .text_color(rgb(0x6c7086))
+                        .child("Edit YAML · Ctrl+S to apply"),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .p_1()
+                        .font_family("Monaco")
+                        .text_base()
+                        .child(Component::new(
+                            Input::new(editor)
+                                .bg(rgb(0x313244))
+                                .h_full()
+                                .appearance(false),
+                        )),
+                )
+        } else {
+            // Fallback: read-only YAML display
+            let mut content = div().flex().flex_col().p_3().font_family("Monaco");
+            for line in self.detail.yaml.lines() {
+                content = content.child(
+                    div()
+                        .text_color(rgb(0xcdd6f4))
+                        .text_sm()
+                        .child(SharedString::from(line.to_string())),
+                );
+            }
+            content
         }
-        content
     }
 
     fn render_events(&self) -> Div {
         if self.detail.events.is_empty() {
-            return div()
-                .p_4()
-                .text_color(rgb(0x6c7086))
-                .child("No events");
+            return div().p_4().text_color(rgb(0x6c7086)).child("No events");
         }
 
         let mut content = div().flex().flex_col().p_3();
@@ -625,11 +672,7 @@ impl DetailPanel {
                         .text_color(rgb(0x89b4fa))
                         .child(SharedString::from(self.spinner.clone())),
                 )
-                .child(
-                    div()
-                        .text_color(rgb(0x6c7086))
-                        .child("Loading logs..."),
-                );
+                .child(div().text_color(rgb(0x6c7086)).child("Loading logs..."));
         }
 
         match &self.logs {
@@ -642,11 +685,7 @@ impl DetailPanel {
                 .text_color(rgb(0x6c7086))
                 .child("No logs available"),
             Some(logs) => {
-                let mut content = div()
-                    .flex()
-                    .flex_col()
-                    .p_2()
-                    .font_family("Monaco");
+                let mut content = div().flex().flex_col().p_2().font_family("Monaco");
                 for line in logs.lines() {
                     content = content.child(
                         div()

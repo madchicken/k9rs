@@ -30,13 +30,19 @@ impl NamespacePicker {
     }
 
     pub fn into_element(self) -> Div {
+        // Full-screen backdrop to capture clicks and prevent pass-through
         div()
             .absolute()
-            .top_8()
+            .top(px(0.0))
             .left(px(0.0))
-            .right(px(0.0))
+            .size_full()
+            .bg(rgba(0x00000088))
             .flex()
             .justify_center()
+            .pt_8()
+            .on_mouse_down(MouseButton::Left, |_, _, _| {
+                // Absorb clicks on the backdrop
+            })
             .child(self.render_panel())
     }
 

@@ -8,7 +8,7 @@ use k8s_openapi::api::core::v1::{
     Service, ServiceAccount,
 };
 use k8s_openapi::api::networking::v1::Ingress;
-use kube::api::{Api, ListParams, LogParams, ResourceExt};
+use kube::api::{Api, DeleteParams, ListParams, LogParams, Patch, PatchParams, ResourceExt};
 use kube::{Client, Config};
 
 use crate::model::detail::{Condition, ContainerInfo, EventEntry, OwnerRef, PodInfo, ResourceDetail};
@@ -589,8 +589,15 @@ impl K8sClient {
             "replicasets" => Self::get_replicaset_detail(client, name, namespace).await,
             "jobs" => Self::get_job_detail(client, name, namespace).await,
             "cronjobs" => Self::get_cronjob_detail(client, name, namespace).await,
+            "configmaps" => Self::get_typed_detail::<ConfigMap>(client, name, namespace, "configmaps").await,
+            "secrets" => Self::get_typed_detail::<Secret>(client, name, namespace, "secrets").await,
+            "serviceaccounts" => Self::get_typed_detail::<ServiceAccount>(client, name, namespace, "serviceaccounts").await,
+            "ingresses" => Self::get_typed_detail::<Ingress>(client, name, namespace, "ingresses").await,
+            "persistentvolumeclaims" => Self::get_typed_detail::<PersistentVolumeClaim>(client, name, namespace, "persistentvolumeclaims").await,
+            "persistentvolumes" => Self::get_pv_detail(client, name).await,
+            "namespaces" => Self::get_ns_detail(client, name).await,
             "nodes" => Self::get_node_detail(client, name).await,
-            // Generic fallback: fetch as JSON, extract metadata
+            "events" => Self::get_typed_detail::<Event>(client, name, namespace, "events").await,
             other => Self::get_generic_detail(client, other, name, namespace).await,
         }
     }
@@ -613,6 +620,110 @@ impl K8sClient {
         }
         let logs = api.logs(name, &params).await?;
         Ok(logs)
+    }
+
+    /// Restart a resource. For workloads (deployments, statefulsets, daemonsets),
+    /// performs a rollout restart by patching the pod template annotation.
+    /// For pods, deletes the pod (letting the controller recreate it).
+    pub async fn restart_resource(
+        resource_type: &str,
+        name: &str,
+        namespace: &str,
+    ) -> Result<String> {
+        let client = Self::client().await?;
+        let now = chrono::Utc::now().to_rfc3339();
+
+        match resource_type {
+            "pods" => {
+                let api: Api<Pod> = Api::namespaced(client, namespace);
+                api.delete(name, &DeleteParams::default()).await?;
+                Ok(format!("Pod {name} deleted"))
+            }
+            "deployments" => {
+                let api: Api<Deployment> = Api::namespaced(client, namespace);
+                let patch = serde_json::json!({
+                    "spec": {
+                        "template": {
+                            "metadata": {
+                                "annotations": {
+                                    "kubectl.kubernetes.io/restartedAt": now
+                                }
+                            }
+                        }
+                    }
+                });
+                api.patch(name, &PatchParams::default(), &Patch::Strategic(patch))
+                    .await?;
+                Ok(format!("Deployment {name} restarted"))
+            }
+            "statefulsets" => {
+                let api: Api<StatefulSet> = Api::namespaced(client, namespace);
+                let patch = serde_json::json!({
+                    "spec": {
+                        "template": {
+                            "metadata": {
+                                "annotations": {
+                                    "kubectl.kubernetes.io/restartedAt": now
+                                }
+                            }
+                        }
+                    }
+                });
+                api.patch(name, &PatchParams::default(), &Patch::Strategic(patch))
+                    .await?;
+                Ok(format!("StatefulSet {name} restarted"))
+            }
+            "daemonsets" => {
+                let api: Api<DaemonSet> = Api::namespaced(client, namespace);
+                let patch = serde_json::json!({
+                    "spec": {
+                        "template": {
+                            "metadata": {
+                                "annotations": {
+                                    "kubectl.kubernetes.io/restartedAt": now
+                                }
+                            }
+                        }
+                    }
+                });
+                api.patch(name, &PatchParams::default(), &Patch::Strategic(patch))
+                    .await?;
+                Ok(format!("DaemonSet {name} restarted"))
+            }
+            other => Err(anyhow::anyhow!(
+                "Restart not supported for {other}"
+            )),
+        }
+    }
+
+    /// Apply YAML to the cluster using kubectl
+    pub async fn apply_yaml(yaml: &str, namespace: &str) -> Result<String> {
+        use tokio::process::Command;
+
+        let temp_dir = std::env::temp_dir();
+        let temp_file = temp_dir.join("k9rs-apply.yaml");
+        tokio::fs::write(&temp_file, yaml).await?;
+
+        let output = Command::new("kubectl")
+            .args(["apply", "-f", temp_file.to_str().unwrap(), "-n", namespace])
+            .output()
+            .await
+            .context("Failed to run kubectl apply")?;
+
+        // Clean up
+        let _ = tokio::fs::remove_file(&temp_file).await;
+
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            Ok(if stdout.is_empty() {
+                "Applied successfully".to_string()
+            } else {
+                stdout
+            })
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            Err(anyhow::anyhow!("{stderr}"))
+        }
     }
 
     /// Fetch events related to a specific resource
@@ -1237,6 +1348,57 @@ impl K8sClient {
                 .collect();
         }
 
+        Ok(detail)
+    }
+
+    /// Detail for any typed namespaced resource (ConfigMap, Secret, etc.)
+    async fn get_typed_detail<K>(
+        client: Client,
+        name: &str,
+        namespace: &str,
+        resource_type: &str,
+    ) -> Result<ResourceDetail>
+    where
+        K: kube::Resource<Scope = k8s_openapi::NamespaceResourceScope>
+            + Clone
+            + std::fmt::Debug
+            + serde::de::DeserializeOwned
+            + serde::Serialize
+            + 'static,
+        <K as kube::Resource>::DynamicType: Default,
+    {
+        let api: Api<K> = Api::namespaced(client.clone(), namespace);
+        let resource = api.get(name).await?;
+        let meta = resource
+            .meta()
+            .clone();
+        let mut detail = Self::extract_metadata(&meta, resource_type);
+        detail.yaml = serde_yaml::to_string(&resource).unwrap_or_default();
+        detail.events = Self::get_resource_events(client, name, namespace).await;
+        Ok(detail)
+    }
+
+    /// Detail for PersistentVolumes (cluster-scoped)
+    async fn get_pv_detail(client: Client, name: &str) -> Result<ResourceDetail> {
+        let api: Api<PersistentVolume> = Api::all(client.clone());
+        let pv = api.get(name).await?;
+        let mut detail = Self::extract_metadata(&pv.metadata, "persistentvolumes");
+        detail.yaml = serde_yaml::to_string(&pv).unwrap_or_default();
+        if let Some(status) = &pv.status {
+            detail.phase = status.phase.clone().unwrap_or_default();
+        }
+        Ok(detail)
+    }
+
+    /// Detail for Namespaces (cluster-scoped)
+    async fn get_ns_detail(client: Client, name: &str) -> Result<ResourceDetail> {
+        let api: Api<Namespace> = Api::all(client.clone());
+        let ns = api.get(name).await?;
+        let mut detail = Self::extract_metadata(&ns.metadata, "namespaces");
+        detail.yaml = serde_yaml::to_string(&ns).unwrap_or_default();
+        if let Some(status) = &ns.status {
+            detail.phase = status.phase.clone().unwrap_or_default();
+        }
         Ok(detail)
     }
 

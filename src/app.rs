@@ -1,4 +1,5 @@
 use gpui::*;
+use gpui_component::input::InputState;
 
 use crate::k8s::{K8sClient, runtime::spawn_on_tokio};
 use crate::model::detail::{DetailTab, ResourceDetail};
@@ -27,6 +28,8 @@ actions!(
         DetailTab2,
         DetailTab3,
         DetailTab4,
+        RestartResource,
+        ApplyYaml,
     ]
 );
 
@@ -59,6 +62,10 @@ pub struct AppView {
     detail_loading: bool,
     detail_logs: Option<String>,
     detail_logs_loading: bool,
+    /// YAML editor state (created when detail loads)
+    yaml_editor: Option<Entity<InputState>>,
+    /// Background task that refreshes pods in the detail view
+    _detail_pods_refresh: Option<gpui::Task<()>>,
     // Namespace picker
     ns_picker_visible: bool,
     ns_picker_loading: bool,
@@ -106,6 +113,8 @@ impl AppView {
             detail_loading: false,
             detail_logs: None,
             detail_logs_loading: false,
+            yaml_editor: None,
+            _detail_pods_refresh: None,
             ns_picker_visible: false,
             ns_picker_loading: false,
             ns_picker_list: vec![],
@@ -234,13 +243,18 @@ impl AppView {
         self.detail_tab = DetailTab::Overview;
         self.detail_logs = None;
         self.detail_logs_loading = false;
+        self.yaml_editor = None;
 
         let resource_type = self.current_resource.clone();
         let namespace = self.current_namespace.clone();
 
+        // Initial detail fetch
+        let rt = resource_type.clone();
+        let n = name.clone();
+        let ns = namespace.clone();
         cx.spawn(async move |this, cx: &mut AsyncApp| {
             let result = spawn_on_tokio(async move {
-                K8sClient::get_resource_detail(&resource_type, &name, &namespace).await
+                K8sClient::get_resource_detail(&rt, &n, &ns).await
             })
             .await;
 
@@ -262,6 +276,163 @@ impl AppView {
             .ok();
         })
         .detach();
+
+        // Start background pods refresh every 5 seconds
+        self._detail_pods_refresh = Some(cx.spawn(async move |this, cx: &mut AsyncApp| {
+            loop {
+                // Sleep 5 seconds on the Tokio runtime
+                spawn_on_tokio(async {
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                })
+                .await;
+
+                // Check if still in detail view
+                let should_continue = cx
+                    .update(|cx| {
+                        this.update(cx, |this, _cx| this.detail_visible).ok()
+                    })
+                    .ok()
+                    .flatten()
+                    .unwrap_or(false);
+
+                if !should_continue {
+                    break;
+                }
+
+                // Fetch fresh detail (which includes pods)
+                let rt = resource_type.clone();
+                let n = name.clone();
+                let ns = namespace.clone();
+                let result = spawn_on_tokio(async move {
+                    K8sClient::get_resource_detail(&rt, &n, &ns).await
+                })
+                .await;
+
+                let updated = cx.update(|cx| {
+                    this.update(cx, |this, cx| {
+                        if !this.detail_visible {
+                            return false;
+                        }
+                        if let Ok(fresh) = result {
+                            if let Some(existing) = &mut this.detail_data {
+                                // Update pods, conditions, and phase without replacing
+                                // the whole detail (preserves user's tab position etc.)
+                                existing.pods = fresh.pods;
+                                existing.conditions = fresh.conditions;
+                                existing.phase = fresh.phase;
+                                existing.containers = fresh.containers;
+                                existing.events = fresh.events;
+                            }
+                            cx.notify();
+                        }
+                        true
+                    })
+                    .ok()
+                    .unwrap_or(false)
+                });
+
+                if updated.ok() != Some(true) {
+                    break;
+                }
+            }
+        }));
+    }
+
+    /// Open detail view for a specific pod by name (used when clicking pod names in workload detail)
+    fn open_pod_detail_by_name(&mut self, pod_name: &str, cx: &mut Context<Self>) {
+        self.detail_visible = true;
+        self.detail_loading = true;
+        self.detail_data = None;
+        self.detail_tab = DetailTab::Overview;
+        self.detail_logs = None;
+        self.detail_logs_loading = false;
+        self.yaml_editor = None;
+
+        let name = pod_name.to_string();
+        let namespace = self.current_namespace.clone();
+
+        let n = name.clone();
+        let ns = namespace.clone();
+        cx.spawn(async move |this, cx: &mut AsyncApp| {
+            let result = spawn_on_tokio(async move {
+                K8sClient::get_resource_detail("pods", &n, &ns).await
+            })
+            .await;
+
+            cx.update(|cx| {
+                this.update(cx, |this, cx| {
+                    this.detail_loading = false;
+                    match result {
+                        Ok(detail) => {
+                            this.detail_data = Some(detail);
+                        }
+                        Err(e) => {
+                            this.status_message = format!("Error: {e}");
+                            this.detail_visible = false;
+                        }
+                    }
+                    cx.notify();
+                })
+            })
+            .ok();
+        })
+        .detach();
+
+        // Start pod refresh loop
+        let resource_type = "pods".to_string();
+        self._detail_pods_refresh = Some(cx.spawn(async move |this, cx: &mut AsyncApp| {
+            loop {
+                spawn_on_tokio(async {
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                })
+                .await;
+
+                let should_continue = cx
+                    .update(|cx| {
+                        this.update(cx, |this, _cx| this.detail_visible).ok()
+                    })
+                    .ok()
+                    .flatten()
+                    .unwrap_or(false);
+
+                if !should_continue {
+                    break;
+                }
+
+                let rt = resource_type.clone();
+                let n = name.clone();
+                let ns = namespace.clone();
+                let result = spawn_on_tokio(async move {
+                    K8sClient::get_resource_detail(&rt, &n, &ns).await
+                })
+                .await;
+
+                let updated = cx.update(|cx| {
+                    this.update(cx, |this, cx| {
+                        if !this.detail_visible {
+                            return false;
+                        }
+                        if let Ok(fresh) = result {
+                            if let Some(existing) = &mut this.detail_data {
+                                existing.pods = fresh.pods;
+                                existing.conditions = fresh.conditions;
+                                existing.phase = fresh.phase;
+                                existing.containers = fresh.containers;
+                                existing.events = fresh.events;
+                            }
+                            cx.notify();
+                        }
+                        true
+                    })
+                    .ok()
+                    .unwrap_or(false)
+                });
+
+                if updated.ok() != Some(true) {
+                    break;
+                }
+            }
+        }));
     }
 
     fn close_detail(&mut self) {
@@ -269,6 +440,143 @@ impl AppView {
         self.detail_data = None;
         self.detail_logs = None;
         self.detail_logs_loading = false;
+        self.yaml_editor = None;
+        self._detail_pods_refresh = None;
+    }
+
+    fn can_restart(&self) -> bool {
+        matches!(
+            self.current_resource.as_str(),
+            "pods" | "deployments" | "statefulsets" | "daemonsets"
+        )
+    }
+
+    fn restart_current_resource(&mut self, cx: &mut Context<Self>) {
+        // Determine what to restart: detail view resource or selected table row
+        let (name, resource_type) = if let Some(detail) = &self.detail_data {
+            if self.detail_visible {
+                (detail.name.clone(), detail.resource_type.clone())
+            } else {
+                return;
+            }
+        } else {
+            // From table view
+            let filtered = self.filtered_rows();
+            let row = match filtered.get(self.selected_row) {
+                Some((_, row)) => row,
+                None => return,
+            };
+            match row.cells.first() {
+                Some(name) => (name.clone(), self.current_resource.clone()),
+                None => return,
+            }
+        };
+
+        if !matches!(
+            resource_type.as_str(),
+            "pods" | "deployments" | "statefulsets" | "daemonsets"
+        ) {
+            self.status_message = format!("Restart not supported for {resource_type}");
+            return;
+        }
+
+        let namespace = self.current_namespace.clone();
+        self.status_message = format!("Restarting {name}...");
+
+        cx.spawn(async move |this, cx: &mut AsyncApp| {
+            let rt = resource_type.clone();
+            let n = name.clone();
+            let ns = namespace.clone();
+            let result = spawn_on_tokio(async move {
+                K8sClient::restart_resource(&rt, &n, &ns).await
+            })
+            .await;
+
+            cx.update(|cx| {
+                this.update(cx, |this, cx| {
+                    match result {
+                        Ok(msg) => {
+                            this.status_message = msg;
+                            // Reload data after restart
+                            if this.detail_visible {
+                                this.open_detail(cx);
+                            } else {
+                                this.load_resource_data(cx);
+                            }
+                        }
+                        Err(e) => {
+                            this.status_message = format!("Restart failed: {e}");
+                        }
+                    }
+                    cx.notify();
+                })
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Ensure the YAML editor exists and is populated with current YAML
+    fn ensure_yaml_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.yaml_editor.is_some() {
+            return;
+        }
+        let yaml = self
+            .detail_data
+            .as_ref()
+            .map(|d| d.yaml.clone())
+            .unwrap_or_default();
+
+        let editor = cx.new(|cx| {
+            InputState::new(window, cx)
+                .code_editor("yaml")
+                .line_number(true)
+                .soft_wrap(false)
+                .default_value(yaml)
+        });
+        self.yaml_editor = Some(editor);
+    }
+
+    fn apply_yaml(&mut self, cx: &mut Context<Self>) {
+        let editor = match &self.yaml_editor {
+            Some(e) => e,
+            None => return,
+        };
+        let yaml_text = editor.read(cx).value().to_string();
+        if yaml_text.trim().is_empty() {
+            self.status_message = "YAML is empty".to_string();
+            return;
+        }
+
+        let namespace = self.current_namespace.clone();
+        self.status_message = "Applying YAML...".to_string();
+
+        cx.spawn(async move |this, cx: &mut AsyncApp| {
+            let ns = namespace.clone();
+            let yaml = yaml_text.clone();
+            let result = spawn_on_tokio(async move {
+                K8sClient::apply_yaml(&yaml, &ns).await
+            })
+            .await;
+
+            cx.update(|cx| {
+                this.update(cx, |this, cx| {
+                    match result {
+                        Ok(msg) => {
+                            this.status_message = msg;
+                            // Reload detail
+                            this.open_detail(cx);
+                        }
+                        Err(e) => {
+                            this.status_message = format!("Apply failed: {e}");
+                        }
+                    }
+                    cx.notify();
+                })
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn switch_detail_tab(&mut self, tab: DetailTab, cx: &mut Context<Self>) {
@@ -437,6 +745,11 @@ impl Render for AppView {
             });
         }
 
+        // Ensure YAML editor exists when detail data is available
+        if self.detail_visible && self.detail_data.is_some() {
+            self.ensure_yaml_editor(window, cx);
+        }
+
         let header = Header::new(
             &self.current_context,
             &self.current_namespace,
@@ -600,6 +913,18 @@ impl Render for AppView {
                     cx.notify();
                 }
             }))
+            .on_action(cx.listener(|this, _: &RestartResource, _window, cx| {
+                if !this.command_mode && !this.filter_mode && !this.ns_picker_visible {
+                    this.restart_current_resource(cx);
+                    cx.notify();
+                }
+            }))
+            .on_action(cx.listener(|this, _: &ApplyYaml, _window, cx| {
+                if this.detail_visible && this.detail_tab == DetailTab::Yaml {
+                    this.apply_yaml(cx);
+                    cx.notify();
+                }
+            }))
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _window, cx| {
                 if this.ns_picker_visible {
                     if let Some(key_char) = &event.keystroke.key_char {
@@ -677,8 +1002,12 @@ impl Render for AppView {
                             self.detail_logs.as_deref(),
                             self.detail_logs_loading,
                             SPINNER_FRAMES[self.spinner_frame % SPINNER_FRAMES.len()],
+                            self.can_restart(),
+                            self.yaml_editor.clone(),
                         );
                         let weak_detail = weak.clone();
+                        let weak_restart = weak.clone();
+                        let weak_pod = weak.clone();
                         body = body.child(
                             div()
                                 .flex_1()
@@ -687,6 +1016,18 @@ impl Render for AppView {
                                     move |tab, _ev, _window, cx| {
                                         weak_detail.update(cx, |this, cx| {
                                             this.switch_detail_tab(tab, cx);
+                                            cx.notify();
+                                        }).ok();
+                                    },
+                                    move |_ev, _window, cx| {
+                                        weak_restart.update(cx, |this, cx| {
+                                            this.restart_current_resource(cx);
+                                            cx.notify();
+                                        }).ok();
+                                    },
+                                    move |pod_name, _ev, _window, cx| {
+                                        weak_pod.update(cx, |this, cx| {
+                                            this.open_pod_detail_by_name(&pod_name, cx);
                                             cx.notify();
                                         }).ok();
                                     },

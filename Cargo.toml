@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 # UI Framework (Zed's GPU-accelerated UI)
 gpui = "0.2"
+gpui-component = "0.5"
 
 # Kubernetes client
 kube = { version = "0.98", features = ["runtime", "client", "derive", "ws"] }
