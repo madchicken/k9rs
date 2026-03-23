@@ -1,17 +1,18 @@
 use gpui::*;
 use gpui_component::input::InputState;
+use gpui_component::table::{Table, TableEvent, TableState};
 
-use crate::k8s::{K8sClient, runtime::spawn_on_tokio};
+use crate::k8s::{runtime::spawn_on_tokio, K8sClient};
 use crate::model::detail::{DetailTab, ResourceDetail};
 use crate::model::port_forward::{PodPort, PortForwardEntry, PortForwardStatus};
-use crate::model::resources::{RESOURCES, resource_index};
+use crate::model::resources::{resource_index, RESOURCES};
 use crate::model::table::TableData;
 use crate::ui::detail_panel::DetailPanel;
 use crate::ui::header::Header;
 use crate::ui::namespace_picker::NamespacePicker;
 use crate::ui::port_forward_dialog::PortForwardDialog;
 use crate::ui::port_forward_list::PortForwardList;
-use crate::ui::resource_table::ResourceTable;
+use crate::ui::resource_table::ResourceTableDelegate;
 use crate::ui::sidebar::Sidebar;
 use crate::ui::status_bar::StatusBar;
 
@@ -51,6 +52,7 @@ pub struct AppView {
     current_namespace: String,
     current_context: String,
     table_data: TableData,
+    table_state: Entity<TableState<ResourceTableDelegate>>,
     selected_row: usize,
     sidebar_selected: usize,
     command_input: String,
@@ -103,13 +105,21 @@ impl Focusable for AppView {
 impl AppView {
     pub fn new(
         cx: &mut Context<Self>,
-        _window: &mut Window,
+        window: &mut Window,
         namespace: &str,
         context: Option<&str>,
         resource: &str,
     ) -> Self {
         let focus_handle = cx.focus_handle();
         let sidebar_selected = resource_index(resource).unwrap_or(0);
+
+        let delegate = ResourceTableDelegate::new(TableData::empty());
+        let table_state = cx.new(|cx| {
+            TableState::new(delegate, window, cx)
+                .row_selectable(true)
+                .col_resizable(true)
+                .sortable(true)
+        });
 
         let mut view = Self {
             focus_handle,
@@ -118,6 +128,7 @@ impl AppView {
             current_namespace: namespace.to_string(),
             current_context: "unknown".to_string(),
             table_data: TableData::empty(),
+            table_state: table_state.clone(),
             selected_row: 0,
             sidebar_selected,
             command_input: String::new(),
@@ -161,6 +172,25 @@ impl AppView {
             view.detect_context();
         }
 
+        // Subscribe to table selection events
+        cx.subscribe_in(
+            &table_state,
+            window,
+            |this, _state, event: &TableEvent, _window, cx| match event {
+                TableEvent::SelectRow(row_ix) => {
+                    this.selected_row = *row_ix;
+                    this.active_panel = FocusPanel::Table;
+                    cx.notify();
+                }
+                TableEvent::DoubleClickedRow(_row_ix) => {
+                    this.open_detail(cx);
+                    cx.notify();
+                }
+                _ => {}
+            },
+        )
+        .detach();
+
         view.load_resource_data(cx);
         view
     }
@@ -196,23 +226,33 @@ impl AppView {
         let namespace = self.current_namespace.clone();
 
         cx.spawn(async move |this, cx: &mut AsyncApp| {
-            let result = spawn_on_tokio(async move {
-                K8sClient::list_resources(&resource, &namespace).await
-            })
-            .await;
+            let result =
+                spawn_on_tokio(
+                    async move { K8sClient::list_resources(&resource, &namespace).await },
+                )
+                .await;
 
             cx.update(|cx| {
                 this.update(cx, |this, cx| {
                     this.loading = false;
                     match result {
                         Ok(data) => {
-                            this.table_data = data;
+                            this.table_data = data.clone();
                             this.selected_row = 0;
                             this.status_message = "Connected".to_string();
+                            // Update the gpui-component table delegate
+                            this.table_state.update(cx, |state, cx| {
+                                state.delegate_mut().update_data(data);
+                                state.refresh(cx);
+                            });
                         }
                         Err(e) => {
                             this.status_message = format!("Error: {e}");
                             this.table_data = TableData::empty();
+                            this.table_state.update(cx, |state, cx| {
+                                state.delegate_mut().update_data(TableData::empty());
+                                state.refresh(cx);
+                            });
                         }
                     }
                     cx.notify();
@@ -226,10 +266,8 @@ impl AppView {
     fn load_namespaces(&mut self, cx: &mut Context<Self>) {
         self.ns_picker_loading = true;
         cx.spawn(async move |this, cx: &mut AsyncApp| {
-            let result = spawn_on_tokio(async move {
-                K8sClient::list_namespace_names().await
-            })
-            .await;
+            let result =
+                spawn_on_tokio(async move { K8sClient::list_namespace_names().await }).await;
 
             cx.update(|cx| {
                 this.update(cx, |this, cx| {
@@ -285,10 +323,9 @@ impl AppView {
         let n = name.clone();
         let ns = namespace.clone();
         cx.spawn(async move |this, cx: &mut AsyncApp| {
-            let result = spawn_on_tokio(async move {
-                K8sClient::get_resource_detail(&rt, &n, &ns).await
-            })
-            .await;
+            let result =
+                spawn_on_tokio(async move { K8sClient::get_resource_detail(&rt, &n, &ns).await })
+                    .await;
 
             cx.update(|cx| {
                 this.update(cx, |this, cx| {
@@ -320,9 +357,7 @@ impl AppView {
 
                 // Check if still in detail view
                 let should_continue = cx
-                    .update(|cx| {
-                        this.update(cx, |this, _cx| this.detail_visible).ok()
-                    })
+                    .update(|cx| this.update(cx, |this, _cx| this.detail_visible).ok())
                     .ok()
                     .flatten()
                     .unwrap_or(false);
@@ -335,10 +370,11 @@ impl AppView {
                 let rt = resource_type.clone();
                 let n = name.clone();
                 let ns = namespace.clone();
-                let result = spawn_on_tokio(async move {
-                    K8sClient::get_resource_detail(&rt, &n, &ns).await
-                })
-                .await;
+                let result =
+                    spawn_on_tokio(
+                        async move { K8sClient::get_resource_detail(&rt, &n, &ns).await },
+                    )
+                    .await;
 
                 let updated = cx.update(|cx| {
                     this.update(cx, |this, cx| {
@@ -386,10 +422,11 @@ impl AppView {
         let n = name.clone();
         let ns = namespace.clone();
         cx.spawn(async move |this, cx: &mut AsyncApp| {
-            let result = spawn_on_tokio(async move {
-                K8sClient::get_resource_detail("pods", &n, &ns).await
-            })
-            .await;
+            let result =
+                spawn_on_tokio(
+                    async move { K8sClient::get_resource_detail("pods", &n, &ns).await },
+                )
+                .await;
 
             cx.update(|cx| {
                 this.update(cx, |this, cx| {
@@ -412,57 +449,52 @@ impl AppView {
 
         // Start pod refresh loop
         let resource_type = "pods".to_string();
-        self._detail_pods_refresh = Some(cx.spawn(async move |this, cx: &mut AsyncApp| {
-            loop {
-                spawn_on_tokio(async {
-                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                })
-                .await;
+        self._detail_pods_refresh = Some(cx.spawn(async move |this, cx: &mut AsyncApp| loop {
+            spawn_on_tokio(async {
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            })
+            .await;
 
-                let should_continue = cx
-                    .update(|cx| {
-                        this.update(cx, |this, _cx| this.detail_visible).ok()
-                    })
-                    .ok()
-                    .flatten()
-                    .unwrap_or(false);
+            let should_continue = cx
+                .update(|cx| this.update(cx, |this, _cx| this.detail_visible).ok())
+                .ok()
+                .flatten()
+                .unwrap_or(false);
 
-                if !should_continue {
-                    break;
-                }
+            if !should_continue {
+                break;
+            }
 
-                let rt = resource_type.clone();
-                let n = name.clone();
-                let ns = namespace.clone();
-                let result = spawn_on_tokio(async move {
-                    K8sClient::get_resource_detail(&rt, &n, &ns).await
-                })
-                .await;
+            let rt = resource_type.clone();
+            let n = name.clone();
+            let ns = namespace.clone();
+            let result =
+                spawn_on_tokio(async move { K8sClient::get_resource_detail(&rt, &n, &ns).await })
+                    .await;
 
-                let updated = cx.update(|cx| {
-                    this.update(cx, |this, cx| {
-                        if !this.detail_visible {
-                            return false;
+            let updated = cx.update(|cx| {
+                this.update(cx, |this, cx| {
+                    if !this.detail_visible {
+                        return false;
+                    }
+                    if let Ok(fresh) = result {
+                        if let Some(existing) = &mut this.detail_data {
+                            existing.pods = fresh.pods;
+                            existing.conditions = fresh.conditions;
+                            existing.phase = fresh.phase;
+                            existing.containers = fresh.containers;
+                            existing.events = fresh.events;
                         }
-                        if let Ok(fresh) = result {
-                            if let Some(existing) = &mut this.detail_data {
-                                existing.pods = fresh.pods;
-                                existing.conditions = fresh.conditions;
-                                existing.phase = fresh.phase;
-                                existing.containers = fresh.containers;
-                                existing.events = fresh.events;
-                            }
-                            cx.notify();
-                        }
-                        true
-                    })
-                    .ok()
-                    .unwrap_or(false)
-                });
+                        cx.notify();
+                    }
+                    true
+                })
+                .ok()
+                .unwrap_or(false)
+            });
 
-                if updated.ok() != Some(true) {
-                    break;
-                }
+            if updated.ok() != Some(true) {
+                break;
             }
         }));
     }
@@ -519,10 +551,9 @@ impl AppView {
             let rt = resource_type.clone();
             let n = name.clone();
             let ns = namespace.clone();
-            let result = spawn_on_tokio(async move {
-                K8sClient::restart_resource(&rt, &n, &ns).await
-            })
-            .await;
+            let result =
+                spawn_on_tokio(async move { K8sClient::restart_resource(&rt, &n, &ns).await })
+                    .await;
 
             cx.update(|cx| {
                 this.update(cx, |this, cx| {
@@ -586,10 +617,8 @@ impl AppView {
         cx.spawn(async move |this, cx: &mut AsyncApp| {
             let ns = namespace.clone();
             let yaml = yaml_text.clone();
-            let result = spawn_on_tokio(async move {
-                K8sClient::apply_yaml(&yaml, &ns).await
-            })
-            .await;
+            let result =
+                spawn_on_tokio(async move { K8sClient::apply_yaml(&yaml, &ns).await }).await;
 
             cx.update(|cx| {
                 this.update(cx, |this, cx| {
@@ -618,7 +647,12 @@ impl AppView {
         let (pod_name, namespace) = if self.detail_visible {
             if let Some(d) = &self.detail_data {
                 if d.resource_type == "pods" {
-                    (d.name.clone(), d.namespace.clone().unwrap_or(self.current_namespace.clone()))
+                    (
+                        d.name.clone(),
+                        d.namespace
+                            .clone()
+                            .unwrap_or(self.current_namespace.clone()),
+                    )
                 } else {
                     self.status_message = "Port forward is only available for pods".to_string();
                     return;
@@ -651,10 +685,8 @@ impl AppView {
         cx.spawn(async move |this, cx: &mut AsyncApp| {
             let n = pod_name.clone();
             let ns = namespace.clone();
-            let result = spawn_on_tokio(async move {
-                K8sClient::get_pod_ports(&n, &ns).await
-            })
-            .await;
+            let result =
+                spawn_on_tokio(async move { K8sClient::get_pod_ports(&n, &ns).await }).await;
 
             cx.update(|cx| {
                 this.update(cx, |this, cx| {
@@ -714,9 +746,8 @@ impl AppView {
         self.pf_next_id += 1;
 
         self.pf_dialog_visible = false;
-        self.status_message = format!(
-            "Starting port forward {local_port} -> {pod_name}:{remote_port}..."
-        );
+        self.status_message =
+            format!("Starting port forward {local_port} -> {pod_name}:{remote_port}...");
 
         cx.spawn(async move |this, cx: &mut AsyncApp| {
             let pn = pod_name.clone();
@@ -780,15 +811,15 @@ impl AppView {
                 let id = *id;
                 if let Some(entry) = self.port_forwards.iter_mut().find(|e| e.id == id) {
                     if matches!(entry.status, PortForwardStatus::Active) {
-                        entry.status = PortForwardStatus::Failed(
-                            format!("Process exited with {status}")
-                        );
+                        entry.status =
+                            PortForwardStatus::Failed(format!("Process exited with {status}"));
                     }
                 }
             }
         }
         // Remove finished handles
-        self.pf_handles.retain_mut(|(_, child)| child.try_wait().ok().flatten().is_none());
+        self.pf_handles
+            .retain_mut(|(_, child)| child.try_wait().ok().flatten().is_none());
     }
 
     fn active_pf_count(&self) -> usize {
@@ -851,10 +882,27 @@ impl AppView {
                 .iter()
                 .enumerate()
                 .filter(|(_, row)| {
-                    row.cells.iter().any(|cell| cell.to_lowercase().contains(&filter))
+                    row.cells
+                        .iter()
+                        .any(|cell| cell.to_lowercase().contains(&filter))
                 })
                 .collect()
         }
+    }
+
+    fn update_table_filter(&mut self, cx: &mut Context<Self>) {
+        let filtered_rows = self.filtered_rows();
+        let filtered_table = TableData {
+            columns: self.table_data.columns.clone(),
+            rows: filtered_rows
+                .iter()
+                .map(|(_, row)| (*row).clone())
+                .collect(),
+        };
+        self.table_state.update(cx, |state, cx| {
+            state.delegate_mut().update_data(filtered_table);
+            state.refresh(cx);
+        });
     }
 
     fn move_selection(&mut self, delta: i32) {
@@ -1004,12 +1052,7 @@ impl Render for AppView {
             &self.current_resource,
         );
 
-        let filtered_rows = self.filtered_rows();
-        let filtered_table = TableData {
-            columns: self.table_data.columns.clone(),
-            rows: filtered_rows.iter().map(|(_, row)| (*row).clone()).collect(),
-        };
-        let table = ResourceTable::new(&filtered_table, self.selected_row);
+        // (Table data is updated in load_resource_data and update_table_filter)
 
         let sidebar = Sidebar::new(
             &self.current_resource,
@@ -1018,9 +1061,8 @@ impl Render for AppView {
         );
 
         let loading = self.loading;
-        let spinner_text = SharedString::from(
-            SPINNER_FRAMES[self.spinner_frame % SPINNER_FRAMES.len()],
-        );
+        let spinner_text =
+            SharedString::from(SPINNER_FRAMES[self.spinner_frame % SPINNER_FRAMES.len()]);
         let loading_resource = self.current_resource.clone();
 
         let weak = cx.weak_entity();
@@ -1066,6 +1108,7 @@ impl Render for AppView {
                     this.filter_mode = true;
                     this.filter_text.clear();
                     this.selected_row = 0;
+                    this.update_table_filter(cx);
                 }
                 cx.notify();
             }))
@@ -1083,6 +1126,7 @@ impl Render for AppView {
                     this.filter_mode = false;
                     this.filter_text.clear();
                     this.selected_row = 0;
+                    this.update_table_filter(cx);
                 } else if this.command_mode {
                     this.command_mode = false;
                     this.command_input.clear();
@@ -1145,6 +1189,7 @@ impl Render for AppView {
                 } else if this.filter_mode {
                     this.filter_text.pop();
                     this.selected_row = 0;
+                    this.update_table_filter(cx);
                 } else if this.command_mode {
                     this.command_input.pop();
                 }
@@ -1188,8 +1233,11 @@ impl Render for AppView {
                 }
             }))
             .on_action(cx.listener(|this, _: &OpenPortForward, _window, cx| {
-                if !this.command_mode && !this.filter_mode && !this.pf_dialog_visible
-                    && !this.pf_list_visible && !this.ns_picker_visible
+                if !this.command_mode
+                    && !this.filter_mode
+                    && !this.pf_dialog_visible
+                    && !this.pf_list_visible
+                    && !this.ns_picker_visible
                 {
                     this.open_port_forward_dialog(cx);
                     cx.notify();
@@ -1221,6 +1269,7 @@ impl Render for AppView {
                     if let Some(key_char) = &event.keystroke.key_char {
                         this.filter_text.push_str(key_char);
                         this.selected_row = 0;
+                        this.update_table_filter(cx);
                     }
                 } else if this.command_mode {
                     if let Some(key_char) = &event.keystroke.key_char {
@@ -1234,52 +1283,42 @@ impl Render for AppView {
             // Body: sidebar + content
             .child({
                 let weak_sidebar = weak.clone();
-                let weak_table = weak.clone();
                 let detail_visible = self.detail_visible;
 
-                let mut body = div()
-                    .flex()
-                    .flex_1()
-                    .overflow_hidden()
-                    .child(sidebar.into_element_with_clicks(
-                        move |idx, _ev, _window, cx| {
-                            weak_sidebar.update(cx, |this, cx| {
+                let mut body = div().flex().flex_1().overflow_hidden().child(
+                    sidebar.into_element_with_clicks(move |idx, _ev, _window, cx| {
+                        weak_sidebar
+                            .update(cx, |this, cx| {
                                 if let Some(entry) = RESOURCES.get(idx) {
                                     this.switch_resource(entry.api_name, cx);
                                     this.active_panel = FocusPanel::Table;
                                 }
                                 cx.notify();
-                            }).ok();
-                        },
-                    ));
+                            })
+                            .ok();
+                    }),
+                );
 
                 if detail_visible {
                     // Detail panel
                     if self.detail_loading {
                         body = body.child(
-                            div()
-                                .flex_1()
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .child(
-                                    div()
-                                        .flex()
-                                        .flex_col()
-                                        .items_center()
-                                        .gap_2()
-                                        .child(
-                                            div()
-                                                .text_xl()
-                                                .text_color(rgb(0x89b4fa))
-                                                .child(spinner_text.clone()),
-                                        )
-                                        .child(
-                                            div()
-                                                .text_color(rgb(0x6c7086))
-                                                .child("Loading details..."),
-                                        ),
-                                ),
+                            div().flex_1().flex().items_center().justify_center().child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .text_xl()
+                                            .text_color(rgb(0x89b4fa))
+                                            .child(spinner_text.clone()),
+                                    )
+                                    .child(
+                                        div().text_color(rgb(0x6c7086)).child("Loading details..."),
+                                    ),
+                            ),
                         );
                     } else if let Some(detail) = &self.detail_data {
                         let panel = DetailPanel::new(
@@ -1294,31 +1333,34 @@ impl Render for AppView {
                         let weak_detail = weak.clone();
                         let weak_restart = weak.clone();
                         let weak_pod = weak.clone();
-                        body = body.child(
-                            div()
-                                .flex_1()
-                                .overflow_hidden()
-                                .child(panel.into_element_with_clicks(
-                                    move |tab, _ev, _window, cx| {
-                                        weak_detail.update(cx, |this, cx| {
+                        body = body.child(div().flex_1().overflow_hidden().child(
+                            panel.into_element_with_clicks(
+                                move |tab, _window, cx| {
+                                    weak_detail
+                                        .update(cx, |this, cx| {
                                             this.switch_detail_tab(tab, cx);
                                             cx.notify();
-                                        }).ok();
-                                    },
-                                    move |_ev, _window, cx| {
-                                        weak_restart.update(cx, |this, cx| {
+                                        })
+                                        .ok();
+                                },
+                                move |_ev, _window, cx| {
+                                    weak_restart
+                                        .update(cx, |this, cx| {
                                             this.restart_current_resource(cx);
                                             cx.notify();
-                                        }).ok();
-                                    },
-                                    move |pod_name, _ev, _window, cx| {
-                                        weak_pod.update(cx, |this, cx| {
+                                        })
+                                        .ok();
+                                },
+                                move |pod_name, _ev, _window, cx| {
+                                    weak_pod
+                                        .update(cx, |this, cx| {
                                             this.open_pod_detail_by_name(&pod_name, cx);
                                             cx.notify();
-                                        }).ok();
-                                    },
-                                )),
-                        );
+                                        })
+                                        .ok();
+                                },
+                            ),
+                        ));
                     }
                 } else if loading {
                     body = body.child(
@@ -1340,29 +1382,20 @@ impl Render for AppView {
                                             .text_color(rgb(0x89b4fa))
                                             .child(spinner_text.clone()),
                                     )
-                                    .child(
-                                        div()
-                                            .text_color(rgb(0x6c7086))
-                                            .child(SharedString::from(format!("Loading {}...", loading_resource))),
-                                    ),
+                                    .child(div().text_color(rgb(0x6c7086)).child(
+                                        SharedString::from(format!(
+                                            "Loading {}...",
+                                            loading_resource
+                                        )),
+                                    )),
                             ),
                     );
                 } else {
                     body = body.child(
                         div()
-                            .id("table-scroll")
                             .flex_1()
-                            .overflow_y_scroll()
-                            .child(table.into_element_with_clicks(
-                                move |idx, _ev, _window, cx| {
-                                    weak_table.update(cx, |this, cx| {
-                                        this.selected_row = idx;
-                                        this.active_panel = FocusPanel::Table;
-                                        this.open_detail(cx);
-                                        cx.notify();
-                                    }).ok();
-                                },
-                            )),
+                            .overflow_hidden()
+                            .child(Component::new(Table::new(&self.table_state).stripe(true))),
                     );
                 }
 
@@ -1402,10 +1435,7 @@ impl Render for AppView {
 
         // Port forward list overlay
         if self.pf_list_visible {
-            let list = PortForwardList::new(
-                &self.port_forwards,
-                self.pf_list_selected,
-            );
+            let list = PortForwardList::new(&self.port_forwards, self.pf_list_selected);
             root = root.child(list.into_element());
         }
 

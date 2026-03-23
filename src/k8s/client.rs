@@ -11,7 +11,9 @@ use k8s_openapi::api::networking::v1::Ingress;
 use kube::api::{Api, DeleteParams, ListParams, LogParams, Patch, PatchParams, ResourceExt};
 use kube::{Client, Config};
 
-use crate::model::detail::{Condition, ContainerInfo, EventEntry, OwnerRef, PodInfo, ResourceDetail};
+use crate::model::detail::{
+    Condition, ContainerInfo, EventEntry, OwnerRef, PodInfo, ResourceDetail,
+};
 use crate::model::port_forward::PodPort;
 use crate::model::table::{TableColumn, TableData, TableRow};
 
@@ -29,7 +31,9 @@ impl K8sClient {
 
     /// Create a kube::Client from the default kubeconfig
     async fn client() -> Result<Client> {
-        let config = Config::infer().await.context("Failed to infer kube config")?;
+        let config = Config::infer()
+            .await
+            .context("Failed to infer kube config")?;
         Client::try_from(config).context("Failed to create Kubernetes client")
     }
 
@@ -131,8 +135,8 @@ impl K8sClient {
         let columns = vec![
             TableColumn::new("NAME", 30),
             TableColumn::new("READY", 10),
-            TableColumn::new("UP-TO-DATE", 12),
-            TableColumn::new("AVAILABLE", 10),
+            TableColumn::new("UP-TO-DATE", 20),
+            TableColumn::new("AVAILABLE", 15),
             TableColumn::new("AGE", 10),
         ];
 
@@ -194,7 +198,11 @@ impl K8sClient {
                     .iter()
                     .map(|p| {
                         let proto = p.protocol.as_deref().unwrap_or("TCP");
-                        let target = p.target_port.as_ref().map(|tp| format!("{tp:?}")).unwrap_or_default();
+                        let target = p
+                            .target_port
+                            .as_ref()
+                            .map(|tp| format!("{tp:?}"))
+                            .unwrap_or_default();
                         format!("{}:{}/{}", p.port, target, proto)
                     })
                     .collect::<Vec<_>>()
@@ -237,16 +245,13 @@ impl K8sClient {
                     .as_ref()
                     .and_then(|s| s.conditions.as_ref())
                     .and_then(|conds| {
-                        conds
-                            .iter()
-                            .find(|c| c.type_ == "Ready")
-                            .map(|c| {
-                                if c.status == "True" {
-                                    "Ready"
-                                } else {
-                                    "NotReady"
-                                }
-                            })
+                        conds.iter().find(|c| c.type_ == "Ready").map(|c| {
+                            if c.status == "True" {
+                                "Ready"
+                            } else {
+                                "NotReady"
+                            }
+                        })
                     })
                     .unwrap_or("Unknown")
                     .to_string();
@@ -335,19 +340,29 @@ impl K8sClient {
             TableColumn::new("READY", 8),
             TableColumn::new("AGE", 10),
         ];
-        let rows = items.items.into_iter().map(|ds| {
-            let name = ds.name_any();
-            let status = ds.status.unwrap_or_default();
-            let age = ds.metadata.creation_timestamp.as_ref()
-                .map(|ts| format_age(&ts.0)).unwrap_or_else(|| "Unknown".into());
-            TableRow { cells: vec![
-                name,
-                status.desired_number_scheduled.to_string(),
-                status.current_number_scheduled.to_string(),
-                status.number_ready.to_string(),
-                age,
-            ]}
-        }).collect();
+        let rows = items
+            .items
+            .into_iter()
+            .map(|ds| {
+                let name = ds.name_any();
+                let status = ds.status.unwrap_or_default();
+                let age = ds
+                    .metadata
+                    .creation_timestamp
+                    .as_ref()
+                    .map(|ts| format_age(&ts.0))
+                    .unwrap_or_else(|| "Unknown".into());
+                TableRow {
+                    cells: vec![
+                        name,
+                        status.desired_number_scheduled.to_string(),
+                        status.current_number_scheduled.to_string(),
+                        status.number_ready.to_string(),
+                        age,
+                    ],
+                }
+            })
+            .collect();
         Ok(TableData { columns, rows })
     }
 
@@ -359,15 +374,25 @@ impl K8sClient {
             TableColumn::new("READY", 10),
             TableColumn::new("AGE", 10),
         ];
-        let rows = items.items.into_iter().map(|sts| {
-            let name = sts.name_any();
-            let status = sts.status.unwrap_or_default();
-            let replicas = status.replicas;
-            let ready = status.ready_replicas.unwrap_or(0);
-            let age = sts.metadata.creation_timestamp.as_ref()
-                .map(|ts| format_age(&ts.0)).unwrap_or_else(|| "Unknown".into());
-            TableRow { cells: vec![name, format!("{ready}/{replicas}"), age] }
-        }).collect();
+        let rows = items
+            .items
+            .into_iter()
+            .map(|sts| {
+                let name = sts.name_any();
+                let status = sts.status.unwrap_or_default();
+                let replicas = status.replicas;
+                let ready = status.ready_replicas.unwrap_or(0);
+                let age = sts
+                    .metadata
+                    .creation_timestamp
+                    .as_ref()
+                    .map(|ts| format_age(&ts.0))
+                    .unwrap_or_else(|| "Unknown".into());
+                TableRow {
+                    cells: vec![name, format!("{ready}/{replicas}"), age],
+                }
+            })
+            .collect();
         Ok(TableData { columns, rows })
     }
 
@@ -381,19 +406,29 @@ impl K8sClient {
             TableColumn::new("READY", 8),
             TableColumn::new("AGE", 10),
         ];
-        let rows = items.items.into_iter().map(|rs| {
-            let name = rs.name_any();
-            let status = rs.status.unwrap_or_default();
-            let age = rs.metadata.creation_timestamp.as_ref()
-                .map(|ts| format_age(&ts.0)).unwrap_or_else(|| "Unknown".into());
-            TableRow { cells: vec![
-                name,
-                status.replicas.to_string(),
-                status.fully_labeled_replicas.unwrap_or(0).to_string(),
-                status.ready_replicas.unwrap_or(0).to_string(),
-                age,
-            ]}
-        }).collect();
+        let rows = items
+            .items
+            .into_iter()
+            .map(|rs| {
+                let name = rs.name_any();
+                let status = rs.status.unwrap_or_default();
+                let age = rs
+                    .metadata
+                    .creation_timestamp
+                    .as_ref()
+                    .map(|ts| format_age(&ts.0))
+                    .unwrap_or_else(|| "Unknown".into());
+                TableRow {
+                    cells: vec![
+                        name,
+                        status.replicas.to_string(),
+                        status.fully_labeled_replicas.unwrap_or(0).to_string(),
+                        status.ready_replicas.unwrap_or(0).to_string(),
+                        age,
+                    ],
+                }
+            })
+            .collect();
         Ok(TableData { columns, rows })
     }
 
@@ -405,13 +440,23 @@ impl K8sClient {
             TableColumn::new("DATA", 6),
             TableColumn::new("AGE", 10),
         ];
-        let rows = items.items.into_iter().map(|cm| {
-            let name = cm.name_any();
-            let data_count = cm.data.map(|d| d.len()).unwrap_or(0);
-            let age = cm.metadata.creation_timestamp.as_ref()
-                .map(|ts| format_age(&ts.0)).unwrap_or_else(|| "Unknown".into());
-            TableRow { cells: vec![name, data_count.to_string(), age] }
-        }).collect();
+        let rows = items
+            .items
+            .into_iter()
+            .map(|cm| {
+                let name = cm.name_any();
+                let data_count = cm.data.map(|d| d.len()).unwrap_or(0);
+                let age = cm
+                    .metadata
+                    .creation_timestamp
+                    .as_ref()
+                    .map(|ts| format_age(&ts.0))
+                    .unwrap_or_else(|| "Unknown".into());
+                TableRow {
+                    cells: vec![name, data_count.to_string(), age],
+                }
+            })
+            .collect();
         Ok(TableData { columns, rows })
     }
 
@@ -424,14 +469,24 @@ impl K8sClient {
             TableColumn::new("DATA", 6),
             TableColumn::new("AGE", 10),
         ];
-        let rows = items.items.into_iter().map(|sec| {
-            let name = sec.name_any();
-            let type_ = sec.type_.unwrap_or_default();
-            let data_count = sec.data.map(|d| d.len()).unwrap_or(0);
-            let age = sec.metadata.creation_timestamp.as_ref()
-                .map(|ts| format_age(&ts.0)).unwrap_or_else(|| "Unknown".into());
-            TableRow { cells: vec![name, type_, data_count.to_string(), age] }
-        }).collect();
+        let rows = items
+            .items
+            .into_iter()
+            .map(|sec| {
+                let name = sec.name_any();
+                let type_ = sec.type_.unwrap_or_default();
+                let data_count = sec.data.map(|d| d.len()).unwrap_or(0);
+                let age = sec
+                    .metadata
+                    .creation_timestamp
+                    .as_ref()
+                    .map(|ts| format_age(&ts.0))
+                    .unwrap_or_else(|| "Unknown".into());
+                TableRow {
+                    cells: vec![name, type_, data_count.to_string(), age],
+                }
+            })
+            .collect();
         Ok(TableData { columns, rows })
     }
 
@@ -443,13 +498,23 @@ impl K8sClient {
             TableColumn::new("SECRETS", 8),
             TableColumn::new("AGE", 10),
         ];
-        let rows = items.items.into_iter().map(|sa| {
-            let name = sa.name_any();
-            let secrets = sa.secrets.map(|s| s.len()).unwrap_or(0);
-            let age = sa.metadata.creation_timestamp.as_ref()
-                .map(|ts| format_age(&ts.0)).unwrap_or_else(|| "Unknown".into());
-            TableRow { cells: vec![name, secrets.to_string(), age] }
-        }).collect();
+        let rows = items
+            .items
+            .into_iter()
+            .map(|sa| {
+                let name = sa.name_any();
+                let secrets = sa.secrets.map(|s| s.len()).unwrap_or(0);
+                let age = sa
+                    .metadata
+                    .creation_timestamp
+                    .as_ref()
+                    .map(|ts| format_age(&ts.0))
+                    .unwrap_or_else(|| "Unknown".into());
+                TableRow {
+                    cells: vec![name, secrets.to_string(), age],
+                }
+            })
+            .collect();
         Ok(TableData { columns, rows })
     }
 
@@ -462,13 +527,19 @@ impl K8sClient {
             TableColumn::new("OBJECT", 25),
             TableColumn::new("MESSAGE", 40),
         ];
-        let rows = items.items.into_iter().map(|ev| {
-            let type_ = ev.type_.unwrap_or_default();
-            let reason = ev.reason.unwrap_or_default();
-            let object = ev.involved_object.name.unwrap_or_default();
-            let message = ev.message.unwrap_or_default();
-            TableRow { cells: vec![type_, reason, object, message] }
-        }).collect();
+        let rows = items
+            .items
+            .into_iter()
+            .map(|ev| {
+                let type_ = ev.type_.unwrap_or_default();
+                let reason = ev.reason.unwrap_or_default();
+                let object = ev.involved_object.name.unwrap_or_default();
+                let message = ev.message.unwrap_or_default();
+                TableRow {
+                    cells: vec![type_, reason, object, message],
+                }
+            })
+            .collect();
         Ok(TableData { columns, rows })
     }
 
@@ -480,15 +551,25 @@ impl K8sClient {
             TableColumn::new("COMPLETIONS", 12),
             TableColumn::new("AGE", 10),
         ];
-        let rows = items.items.into_iter().map(|job| {
-            let name = job.name_any();
-            let status = job.status.unwrap_or_default();
-            let succeeded = status.succeeded.unwrap_or(0);
-            let completions = job.spec.and_then(|s| s.completions).unwrap_or(1);
-            let age = job.metadata.creation_timestamp.as_ref()
-                .map(|ts| format_age(&ts.0)).unwrap_or_else(|| "Unknown".into());
-            TableRow { cells: vec![name, format!("{succeeded}/{completions}"), age] }
-        }).collect();
+        let rows = items
+            .items
+            .into_iter()
+            .map(|job| {
+                let name = job.name_any();
+                let status = job.status.unwrap_or_default();
+                let succeeded = status.succeeded.unwrap_or(0);
+                let completions = job.spec.and_then(|s| s.completions).unwrap_or(1);
+                let age = job
+                    .metadata
+                    .creation_timestamp
+                    .as_ref()
+                    .map(|ts| format_age(&ts.0))
+                    .unwrap_or_else(|| "Unknown".into());
+                TableRow {
+                    cells: vec![name, format!("{succeeded}/{completions}"), age],
+                }
+            })
+            .collect();
         Ok(TableData { columns, rows })
     }
 
@@ -502,17 +583,33 @@ impl K8sClient {
             TableColumn::new("ACTIVE", 8),
             TableColumn::new("AGE", 10),
         ];
-        let rows = items.items.into_iter().map(|cj| {
-            let name = cj.name_any();
-            let schedule = cj.spec.as_ref().map(|s| s.schedule.clone()).unwrap_or_default();
-            let suspend = cj.spec.as_ref().and_then(|s| s.suspend).unwrap_or(false);
-            let active = cj.status.and_then(|s| s.active).map(|a| a.len()).unwrap_or(0);
-            let age = cj.metadata.creation_timestamp.as_ref()
-                .map(|ts| format_age(&ts.0)).unwrap_or_else(|| "Unknown".into());
-            TableRow { cells: vec![
-                name, schedule, suspend.to_string(), active.to_string(), age,
-            ]}
-        }).collect();
+        let rows = items
+            .items
+            .into_iter()
+            .map(|cj| {
+                let name = cj.name_any();
+                let schedule = cj
+                    .spec
+                    .as_ref()
+                    .map(|s| s.schedule.clone())
+                    .unwrap_or_default();
+                let suspend = cj.spec.as_ref().and_then(|s| s.suspend).unwrap_or(false);
+                let active = cj
+                    .status
+                    .and_then(|s| s.active)
+                    .map(|a| a.len())
+                    .unwrap_or(0);
+                let age = cj
+                    .metadata
+                    .creation_timestamp
+                    .as_ref()
+                    .map(|ts| format_age(&ts.0))
+                    .unwrap_or_else(|| "Unknown".into());
+                TableRow {
+                    cells: vec![name, schedule, suspend.to_string(), active.to_string(), age],
+                }
+            })
+            .collect();
         Ok(TableData { columns, rows })
     }
 
@@ -526,22 +623,42 @@ impl K8sClient {
             TableColumn::new("CLAIM", 25),
             TableColumn::new("AGE", 10),
         ];
-        let rows = items.items.into_iter().map(|pv| {
-            let name = pv.name_any();
-            let capacity = pv.spec.as_ref()
-                .and_then(|s| s.capacity.as_ref())
-                .and_then(|c| c.get("storage"))
-                .map(|s| s.0.clone())
-                .unwrap_or_default();
-            let status = pv.status.and_then(|s| s.phase).unwrap_or_default();
-            let claim = pv.spec.as_ref()
-                .and_then(|s| s.claim_ref.as_ref())
-                .map(|c| format!("{}/{}", c.namespace.as_deref().unwrap_or(""), c.name.as_deref().unwrap_or("")))
-                .unwrap_or_default();
-            let age = pv.metadata.creation_timestamp.as_ref()
-                .map(|ts| format_age(&ts.0)).unwrap_or_else(|| "Unknown".into());
-            TableRow { cells: vec![name, capacity, status, claim, age] }
-        }).collect();
+        let rows = items
+            .items
+            .into_iter()
+            .map(|pv| {
+                let name = pv.name_any();
+                let capacity = pv
+                    .spec
+                    .as_ref()
+                    .and_then(|s| s.capacity.as_ref())
+                    .and_then(|c| c.get("storage"))
+                    .map(|s| s.0.clone())
+                    .unwrap_or_default();
+                let status = pv.status.and_then(|s| s.phase).unwrap_or_default();
+                let claim = pv
+                    .spec
+                    .as_ref()
+                    .and_then(|s| s.claim_ref.as_ref())
+                    .map(|c| {
+                        format!(
+                            "{}/{}",
+                            c.namespace.as_deref().unwrap_or(""),
+                            c.name.as_deref().unwrap_or("")
+                        )
+                    })
+                    .unwrap_or_default();
+                let age = pv
+                    .metadata
+                    .creation_timestamp
+                    .as_ref()
+                    .map(|ts| format_age(&ts.0))
+                    .unwrap_or_else(|| "Unknown".into());
+                TableRow {
+                    cells: vec![name, capacity, status, claim, age],
+                }
+            })
+            .collect();
         Ok(TableData { columns, rows })
     }
 
@@ -555,19 +672,39 @@ impl K8sClient {
             TableColumn::new("CAPACITY", 10),
             TableColumn::new("AGE", 10),
         ];
-        let rows = items.items.into_iter().map(|pvc| {
-            let name = pvc.name_any();
-            let status = pvc.status.as_ref().and_then(|s| s.phase.clone()).unwrap_or_default();
-            let volume = pvc.spec.as_ref().and_then(|s| s.volume_name.clone()).unwrap_or_default();
-            let capacity = pvc.status.as_ref()
-                .and_then(|s| s.capacity.as_ref())
-                .and_then(|c| c.get("storage"))
-                .map(|s| s.0.clone())
-                .unwrap_or_default();
-            let age = pvc.metadata.creation_timestamp.as_ref()
-                .map(|ts| format_age(&ts.0)).unwrap_or_else(|| "Unknown".into());
-            TableRow { cells: vec![name, status, volume, capacity, age] }
-        }).collect();
+        let rows = items
+            .items
+            .into_iter()
+            .map(|pvc| {
+                let name = pvc.name_any();
+                let status = pvc
+                    .status
+                    .as_ref()
+                    .and_then(|s| s.phase.clone())
+                    .unwrap_or_default();
+                let volume = pvc
+                    .spec
+                    .as_ref()
+                    .and_then(|s| s.volume_name.clone())
+                    .unwrap_or_default();
+                let capacity = pvc
+                    .status
+                    .as_ref()
+                    .and_then(|s| s.capacity.as_ref())
+                    .and_then(|c| c.get("storage"))
+                    .map(|s| s.0.clone())
+                    .unwrap_or_default();
+                let age = pvc
+                    .metadata
+                    .creation_timestamp
+                    .as_ref()
+                    .map(|ts| format_age(&ts.0))
+                    .unwrap_or_else(|| "Unknown".into());
+                TableRow {
+                    cells: vec![name, status, volume, capacity, age],
+                }
+            })
+            .collect();
         Ok(TableData { columns, rows })
     }
 
@@ -590,11 +727,26 @@ impl K8sClient {
             "replicasets" => Self::get_replicaset_detail(client, name, namespace).await,
             "jobs" => Self::get_job_detail(client, name, namespace).await,
             "cronjobs" => Self::get_cronjob_detail(client, name, namespace).await,
-            "configmaps" => Self::get_typed_detail::<ConfigMap>(client, name, namespace, "configmaps").await,
+            "configmaps" => {
+                Self::get_typed_detail::<ConfigMap>(client, name, namespace, "configmaps").await
+            }
             "secrets" => Self::get_typed_detail::<Secret>(client, name, namespace, "secrets").await,
-            "serviceaccounts" => Self::get_typed_detail::<ServiceAccount>(client, name, namespace, "serviceaccounts").await,
-            "ingresses" => Self::get_typed_detail::<Ingress>(client, name, namespace, "ingresses").await,
-            "persistentvolumeclaims" => Self::get_typed_detail::<PersistentVolumeClaim>(client, name, namespace, "persistentvolumeclaims").await,
+            "serviceaccounts" => {
+                Self::get_typed_detail::<ServiceAccount>(client, name, namespace, "serviceaccounts")
+                    .await
+            }
+            "ingresses" => {
+                Self::get_typed_detail::<Ingress>(client, name, namespace, "ingresses").await
+            }
+            "persistentvolumeclaims" => {
+                Self::get_typed_detail::<PersistentVolumeClaim>(
+                    client,
+                    name,
+                    namespace,
+                    "persistentvolumeclaims",
+                )
+                .await
+            }
             "persistentvolumes" => Self::get_pv_detail(client, name).await,
             "namespaces" => Self::get_ns_detail(client, name).await,
             "nodes" => Self::get_node_detail(client, name).await,
@@ -691,9 +843,7 @@ impl K8sClient {
                     .await?;
                 Ok(format!("DaemonSet {name} restarted"))
             }
-            other => Err(anyhow::anyhow!(
-                "Restart not supported for {other}"
-            )),
+            other => Err(anyhow::anyhow!("Restart not supported for {other}")),
         }
     }
 
@@ -779,11 +929,7 @@ impl K8sClient {
     }
 
     /// Fetch events related to a specific resource
-    async fn get_resource_events(
-        client: Client,
-        name: &str,
-        namespace: &str,
-    ) -> Vec<EventEntry> {
+    async fn get_resource_events(client: Client, name: &str, namespace: &str) -> Vec<EventEntry> {
         let api: Api<Event> = Api::namespaced(client, namespace);
         let field_selector = format!("involvedObject.name={name}");
         let lp = ListParams::default().fields(&field_selector);
@@ -803,10 +949,7 @@ impl K8sClient {
                     .as_ref()
                     .map(|ts| format_age(&ts.0))
                     .unwrap_or_default(),
-                from: ev
-                    .source
-                    .and_then(|s| s.component)
-                    .unwrap_or_default(),
+                from: ev.source.and_then(|s| s.component).unwrap_or_default(),
                 message: ev.message.unwrap_or_default(),
             })
             .collect()
@@ -860,10 +1003,9 @@ impl K8sClient {
                                             .as_ref()
                                             .map(|ts| format_age(&ts.0))
                                             .unwrap_or_default();
-                                        let reason =
-                                            t.reason.clone().unwrap_or_else(|| {
-                                                format!("exit code {}", t.exit_code)
-                                            });
+                                        let reason = t.reason.clone().unwrap_or_else(|| {
+                                            format!("exit code {}", t.exit_code)
+                                        });
                                         (time, reason)
                                     })
                                 })
@@ -878,9 +1020,7 @@ impl K8sClient {
                     .and_then(|s| s.node_name.clone())
                     .unwrap_or_default();
 
-                let ip = status
-                    .and_then(|s| s.pod_ip.clone())
-                    .unwrap_or_default();
+                let ip = status.and_then(|s| s.pod_ip.clone()).unwrap_or_default();
 
                 let age = pod
                     .metadata
@@ -1267,11 +1407,7 @@ impl K8sClient {
         Ok(detail)
     }
 
-    async fn get_job_detail(
-        client: Client,
-        name: &str,
-        namespace: &str,
-    ) -> Result<ResourceDetail> {
+    async fn get_job_detail(client: Client, name: &str, namespace: &str) -> Result<ResourceDetail> {
         let api: Api<Job> = Api::namespaced(client.clone(), namespace);
         let job = api.get(name).await?;
 
@@ -1345,16 +1481,13 @@ impl K8sClient {
                 .conditions
                 .as_ref()
                 .and_then(|conds| {
-                    conds
-                        .iter()
-                        .find(|c| c.type_ == "Ready")
-                        .map(|c| {
-                            if c.status == "True" {
-                                "Ready"
-                            } else {
-                                "NotReady"
-                            }
-                        })
+                    conds.iter().find(|c| c.type_ == "Ready").map(|c| {
+                        if c.status == "True" {
+                            "Ready"
+                        } else {
+                            "NotReady"
+                        }
+                    })
                 })
                 .unwrap_or("Unknown")
                 .to_string();
@@ -1421,9 +1554,7 @@ impl K8sClient {
     {
         let api: Api<K> = Api::namespaced(client.clone(), namespace);
         let resource = api.get(name).await?;
-        let meta = resource
-            .meta()
-            .clone();
+        let meta = resource.meta().clone();
         let mut detail = Self::extract_metadata(&meta, resource_type);
         detail.yaml = serde_yml::to_string(&resource).unwrap_or_default();
         detail.events = Self::get_resource_events(client, name, namespace).await;
@@ -1492,23 +1623,40 @@ impl K8sClient {
             TableColumn::new("HOSTS", 30),
             TableColumn::new("AGE", 10),
         ];
-        let rows = items.items.into_iter().map(|ing| {
-            let name = ing.name_any();
-            let class = ing.spec.as_ref()
-                .and_then(|s| s.ingress_class_name.clone())
-                .unwrap_or_else(|| "<none>".into());
-            let hosts = ing.spec.as_ref()
-                .and_then(|s| s.rules.as_ref())
-                .map(|rules| rules.iter()
-                    .filter_map(|r| r.host.as_ref())
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join(","))
-                .unwrap_or_else(|| "*".into());
-            let age = ing.metadata.creation_timestamp.as_ref()
-                .map(|ts| format_age(&ts.0)).unwrap_or_else(|| "Unknown".into());
-            TableRow { cells: vec![name, class, hosts, age] }
-        }).collect();
+        let rows = items
+            .items
+            .into_iter()
+            .map(|ing| {
+                let name = ing.name_any();
+                let class = ing
+                    .spec
+                    .as_ref()
+                    .and_then(|s| s.ingress_class_name.clone())
+                    .unwrap_or_else(|| "<none>".into());
+                let hosts = ing
+                    .spec
+                    .as_ref()
+                    .and_then(|s| s.rules.as_ref())
+                    .map(|rules| {
+                        rules
+                            .iter()
+                            .filter_map(|r| r.host.as_ref())
+                            .cloned()
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    })
+                    .unwrap_or_else(|| "*".into());
+                let age = ing
+                    .metadata
+                    .creation_timestamp
+                    .as_ref()
+                    .map(|ts| format_age(&ts.0))
+                    .unwrap_or_else(|| "Unknown".into());
+                TableRow {
+                    cells: vec![name, class, hosts, age],
+                }
+            })
+            .collect();
         Ok(TableData { columns, rows })
     }
 }

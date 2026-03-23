@@ -1,5 +1,6 @@
 use gpui::*;
 use gpui_component::input::{Input, InputState};
+use gpui_component::tab::{Tab, TabBar};
 
 use crate::model::detail::{DetailTab, ResourceDetail};
 
@@ -37,103 +38,46 @@ impl DetailPanel {
 
     pub fn into_element_with_clicks(
         self,
-        on_tab_click: impl Fn(DetailTab, &MouseDownEvent, &mut Window, &mut App) + 'static,
+        on_tab_click: impl Fn(DetailTab, &mut Window, &mut App) + 'static,
         on_restart: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
         on_pod_click: impl Fn(String, &MouseDownEvent, &mut Window, &mut App) + 'static,
     ) -> Div {
-        let tab_bar = self.render_tab_bar(on_tab_click, on_restart);
         let on_pod_click = std::rc::Rc::new(on_pod_click);
         let is_yaml_editor = self.active_tab == DetailTab::Yaml && self.yaml_editor.is_some();
-        let tab_content = match self.active_tab {
-            DetailTab::Overview => self.render_overview(Some(on_pod_click)),
-            DetailTab::Yaml => self.render_yaml(),
-            DetailTab::Events => self.render_events(),
-            DetailTab::Logs => self.render_logs(),
-        };
+        let active_tab_index = DetailTab::all()
+            .iter()
+            .position(|t| *t == self.active_tab)
+            .unwrap_or(0);
 
-        let mut root = div().flex().flex_col().w_full().h_full().child(tab_bar);
+        // Build the tab bar using gpui-component TabBar
+        let is_logs_disabled = self.detail.resource_type != "pods";
+        let tabs = DetailTab::all();
 
-        if is_yaml_editor {
-            // YAML editor manages its own scrolling — don't wrap in scroll container
-            root = root.child(div().flex_1().overflow_hidden().child(tab_content));
-        } else {
-            // Other tabs use external scroll
-            root = root.child(
-                div()
-                    .id("detail-content-scroll")
-                    .flex_1()
-                    .overflow_y_scroll()
-                    .child(tab_content),
-            );
-        }
-
-        root
-    }
-
-    fn render_tab_bar(
-        &self,
-        on_tab_click: impl Fn(DetailTab, &MouseDownEvent, &mut Window, &mut App) + 'static,
-        on_restart: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
-    ) -> Div {
-        let on_tab_click = std::rc::Rc::new(on_tab_click);
-
-        let mut bar = div()
-            .flex()
-            .w_full()
-            .bg(rgb(0x313244))
-            .border_b_1()
-            .border_color(rgb(0x45475a))
-            .px_2()
-            .gap_1();
+        let mut tab_bar_widget = TabBar::new("detail-tabs")
+            .selected_index(active_tab_index)
+            .on_click(move |index, window, cx| {
+                let tab = tabs[*index];
+                if tab == DetailTab::Logs && is_logs_disabled {
+                    return;
+                }
+                on_tab_click(tab, window, cx);
+            });
 
         for tab in DetailTab::all() {
-            let tab = *tab;
-            let is_active = tab == self.active_tab;
-            let is_logs_disabled = tab == DetailTab::Logs && self.detail.resource_type != "pods";
-
-            let bg = if is_active {
-                rgb(0x45475a)
-            } else {
-                rgb(0x313244)
-            };
-
-            let text_color = if is_logs_disabled {
-                rgb(0x585b70)
-            } else if is_active {
-                rgb(0x89b4fa)
-            } else {
-                rgb(0xbac2de)
-            };
-
-            let cb = on_tab_click.clone();
-            bar = bar.child(
-                div()
-                    .px_3()
-                    .py_1()
-                    .bg(bg)
-                    .text_color(text_color)
-                    .text_sm()
-                    .flex()
-                    .gap_1()
-                    .cursor_pointer()
-                    .hover(|s| s.bg(rgb(0x45475a)))
-                    .on_mouse_down(MouseButton::Left, move |ev, window, cx| {
-                        if !is_logs_disabled {
-                            cb(tab, ev, window, cx);
-                        }
-                    })
-                    .child(
-                        div()
-                            .text_color(rgb(0x6c7086))
-                            .text_xs()
-                            .child(tab.key_hint()),
-                    )
-                    .child(tab.label()),
-            );
+            let label = format!("{} {}", tab.key_hint(), tab.label());
+            tab_bar_widget = tab_bar_widget.child(Tab::new().label(label));
         }
 
+        // Wrap tab bar + restart button + resource name in a row
+        let mut top_bar = div()
+            .flex()
+            .w_full()
+            .items_center()
+            .bg(rgb(0x313244))
+            .child(Component::new(tab_bar_widget));
+
         // Right side: restart button + resource name
-        let mut right = div().flex_1().flex().justify_end().items_center().gap_2();
+        let mut right = div().flex().items_center().gap_2().pr_2();
 
         if self.can_restart {
             right = right.child(
@@ -163,9 +107,31 @@ impl DetailPanel {
                 .child(SharedString::from(self.detail.name.clone())),
         );
 
-        bar = bar.child(right);
+        top_bar = top_bar.child(right);
 
-        bar
+        // Tab content
+        let tab_content = match self.active_tab {
+            DetailTab::Overview => self.render_overview(Some(on_pod_click)),
+            DetailTab::Yaml => self.render_yaml(),
+            DetailTab::Events => self.render_events(),
+            DetailTab::Logs => self.render_logs(),
+        };
+
+        let mut root = div().flex().flex_col().w_full().h_full().child(top_bar);
+
+        if is_yaml_editor {
+            root = root.child(div().flex_1().overflow_hidden().child(tab_content));
+        } else {
+            root = root.child(
+                div()
+                    .id("detail-content-scroll")
+                    .flex_1()
+                    .overflow_y_scroll()
+                    .child(tab_content),
+            );
+        }
+
+        root
     }
 
     fn render_overview(

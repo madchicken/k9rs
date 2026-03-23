@@ -47,14 +47,14 @@ fn main() {
             theme.mono_font_size = px(14.);
 
             // Catppuccin Mocha colors
-            let base = hsla(232. / 360., 0.23, 0.18, 1.0);        // #1e1e2e
-            let surface0 = hsla(230. / 360., 0.14, 0.24, 1.0);    // #313244
-            let surface1 = hsla(231. / 360., 0.16, 0.34, 1.0);    // #45475a
-            let surface2 = hsla(232. / 360., 0.12, 0.39, 1.0);    // #585b70
-            let overlay0 = hsla(228. / 360., 0.11, 0.48, 1.0);    // #6c7086
-            let text = hsla(226. / 360., 0.64, 0.88, 1.0);        // #cdd6f4
-            let subtext = hsla(227. / 360., 0.35, 0.80, 1.0);     // #bac2de
-            let blue = hsla(217. / 360., 0.92, 0.76, 1.0);        // #89b4fa
+            let base = hsla(232. / 360., 0.23, 0.18, 1.0); // #1e1e2e
+            let surface0 = hsla(230. / 360., 0.14, 0.24, 1.0); // #313244
+            let surface1 = hsla(231. / 360., 0.16, 0.34, 1.0); // #45475a
+            let surface2 = hsla(232. / 360., 0.12, 0.39, 1.0); // #585b70
+            let overlay0 = hsla(228. / 360., 0.11, 0.48, 1.0); // #6c7086
+            let text = hsla(226. / 360., 0.64, 0.88, 1.0); // #cdd6f4
+            let subtext = hsla(227. / 360., 0.35, 0.80, 1.0); // #bac2de
+            let blue = hsla(217. / 360., 0.92, 0.76, 1.0); // #89b4fa
 
             theme.colors.background = base;
             theme.colors.foreground = text;
@@ -70,6 +70,25 @@ fn main() {
             theme.colors.ring = blue;
             theme.colors.scrollbar_thumb = surface1;
             theme.colors.scrollbar = base;
+
+            // Tab colors
+            theme.colors.tab = surface0;
+            theme.colors.tab_active = surface1;
+            theme.colors.tab_active_foreground = blue;
+            theme.colors.tab_bar = surface0;
+            theme.colors.tab_foreground = subtext;
+
+            // Table colors — table_active overlay is absolute-positioned on top of text,
+            // so it must be semi-transparent for text to remain visible
+            theme.colors.table = base;
+            theme.colors.table_active = hsla(217. / 360., 0.92, 0.76, 0.15); // blue tint, semi-transparent
+            theme.colors.table_active_border = hsla(217. / 360., 0.92, 0.76, 0.4); // subtle blue border
+            theme.colors.table_even = hsla(233. / 360., 0.20, 0.20, 1.0); // #24243a
+            theme.colors.table_head = surface1;
+            theme.colors.table_head_foreground = blue;
+            theme.colors.table_hover = hsla(232. / 360., 0.20, 0.28, 0.5); // semi-transparent hover
+            theme.colors.table_row_border = hsla(0., 0., 0., 0.0); // transparent
+            theme.colors.secondary_foreground = text;
 
             // Editor-specific colors (highlight theme)
             let ht = std::sync::Arc::make_mut(&mut theme.highlight_theme);
