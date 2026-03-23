@@ -3,11 +3,14 @@ use gpui_component::input::InputState;
 
 use crate::k8s::{K8sClient, runtime::spawn_on_tokio};
 use crate::model::detail::{DetailTab, ResourceDetail};
+use crate::model::port_forward::{PodPort, PortForwardEntry, PortForwardStatus};
 use crate::model::resources::{RESOURCES, resource_index};
 use crate::model::table::TableData;
 use crate::ui::detail_panel::DetailPanel;
 use crate::ui::header::Header;
 use crate::ui::namespace_picker::NamespacePicker;
+use crate::ui::port_forward_dialog::PortForwardDialog;
+use crate::ui::port_forward_list::PortForwardList;
 use crate::ui::resource_table::ResourceTable;
 use crate::ui::sidebar::Sidebar;
 use crate::ui::status_bar::StatusBar;
@@ -30,6 +33,8 @@ actions!(
         DetailTab4,
         RestartResource,
         ApplyYaml,
+        OpenPortForward,
+        StopPortForward,
     ]
 );
 
@@ -66,6 +71,21 @@ pub struct AppView {
     yaml_editor: Option<Entity<InputState>>,
     /// Background task that refreshes pods in the detail view
     _detail_pods_refresh: Option<gpui::Task<()>>,
+    // Port forward dialog
+    pf_dialog_visible: bool,
+    pf_dialog_pod_name: String,
+    pf_dialog_namespace: String,
+    pf_dialog_ports: Vec<PodPort>,
+    pf_dialog_selected: usize,
+    pf_dialog_local_port: String,
+    pf_dialog_loading: bool,
+    // Port forward list
+    pf_list_visible: bool,
+    pf_list_selected: usize,
+    // Active port forwards
+    port_forwards: Vec<PortForwardEntry>,
+    pf_handles: Vec<(u64, tokio::process::Child)>,
+    pf_next_id: u64,
     // Namespace picker
     ns_picker_visible: bool,
     ns_picker_loading: bool,
@@ -115,6 +135,18 @@ impl AppView {
             detail_logs_loading: false,
             yaml_editor: None,
             _detail_pods_refresh: None,
+            pf_dialog_visible: false,
+            pf_dialog_pod_name: String::new(),
+            pf_dialog_namespace: String::new(),
+            pf_dialog_ports: vec![],
+            pf_dialog_selected: 0,
+            pf_dialog_local_port: String::new(),
+            pf_dialog_loading: false,
+            pf_list_visible: false,
+            pf_list_selected: 0,
+            port_forwards: vec![],
+            pf_handles: vec![],
+            pf_next_id: 1,
             ns_picker_visible: false,
             ns_picker_loading: false,
             ns_picker_list: vec![],
@@ -579,6 +611,193 @@ impl AppView {
         .detach();
     }
 
+    // ── Port forward methods ──
+
+    fn open_port_forward_dialog(&mut self, cx: &mut Context<Self>) {
+        // Determine pod name: from detail view or selected table row
+        let (pod_name, namespace) = if self.detail_visible {
+            if let Some(d) = &self.detail_data {
+                if d.resource_type == "pods" {
+                    (d.name.clone(), d.namespace.clone().unwrap_or(self.current_namespace.clone()))
+                } else {
+                    self.status_message = "Port forward is only available for pods".to_string();
+                    return;
+                }
+            } else {
+                return;
+            }
+        } else if self.current_resource == "pods" {
+            let filtered = self.filtered_rows();
+            match filtered.get(self.selected_row) {
+                Some((_, row)) => match row.cells.first() {
+                    Some(name) => (name.clone(), self.current_namespace.clone()),
+                    None => return,
+                },
+                None => return,
+            }
+        } else {
+            self.status_message = "Port forward is only available for pods".to_string();
+            return;
+        };
+
+        self.pf_dialog_visible = true;
+        self.pf_dialog_pod_name = pod_name.clone();
+        self.pf_dialog_namespace = namespace.clone();
+        self.pf_dialog_ports = vec![];
+        self.pf_dialog_selected = 0;
+        self.pf_dialog_local_port.clear();
+        self.pf_dialog_loading = true;
+
+        cx.spawn(async move |this, cx: &mut AsyncApp| {
+            let n = pod_name.clone();
+            let ns = namespace.clone();
+            let result = spawn_on_tokio(async move {
+                K8sClient::get_pod_ports(&n, &ns).await
+            })
+            .await;
+
+            cx.update(|cx| {
+                this.update(cx, |this, cx| {
+                    this.pf_dialog_loading = false;
+                    match result {
+                        Ok(ports) => {
+                            this.pf_dialog_ports = ports;
+                            // Auto-suggest local port = remote port
+                            if let Some(first) = this.pf_dialog_ports.first() {
+                                this.pf_dialog_local_port = first.port.to_string();
+                            }
+                        }
+                        Err(e) => {
+                            this.status_message = format!("Error: {e}");
+                        }
+                    }
+                    cx.notify();
+                })
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn start_port_forward(&mut self, cx: &mut Context<Self>) {
+        let remote_port = if self.pf_dialog_ports.is_empty() {
+            // Try parsing local_port as remote too
+            match self.pf_dialog_local_port.parse::<u16>() {
+                Ok(p) => p,
+                Err(_) => {
+                    self.status_message = "Invalid port number".to_string();
+                    return;
+                }
+            }
+        } else {
+            match self.pf_dialog_ports.get(self.pf_dialog_selected) {
+                Some(p) => p.port,
+                None => return,
+            }
+        };
+
+        let local_port = if self.pf_dialog_local_port.is_empty() {
+            remote_port
+        } else {
+            match self.pf_dialog_local_port.parse::<u16>() {
+                Ok(p) => p,
+                Err(_) => {
+                    self.status_message = "Invalid local port number".to_string();
+                    return;
+                }
+            }
+        };
+
+        let pod_name = self.pf_dialog_pod_name.clone();
+        let namespace = self.pf_dialog_namespace.clone();
+        let id = self.pf_next_id;
+        self.pf_next_id += 1;
+
+        self.pf_dialog_visible = false;
+        self.status_message = format!(
+            "Starting port forward {local_port} -> {pod_name}:{remote_port}..."
+        );
+
+        cx.spawn(async move |this, cx: &mut AsyncApp| {
+            let pn = pod_name.clone();
+            let ns = namespace.clone();
+            let result = spawn_on_tokio(async move {
+                K8sClient::start_port_forward(&pn, &ns, local_port, remote_port).await
+            })
+            .await;
+
+            cx.update(|cx| {
+                this.update(cx, |this, cx| {
+                    match result {
+                        Ok(child) => {
+                            this.port_forwards.push(PortForwardEntry {
+                                id,
+                                pod_name: pod_name.clone(),
+                                namespace: namespace.clone(),
+                                local_port,
+                                remote_port,
+                                status: PortForwardStatus::Active,
+                                started_at: chrono::Utc::now().format("%H:%M:%S").to_string(),
+                            });
+                            this.pf_handles.push((id, child));
+                            this.status_message = format!(
+                                "Port forward {local_port} -> {pod_name}:{remote_port} started"
+                            );
+                        }
+                        Err(e) => {
+                            this.status_message = format!("Port forward failed: {e}");
+                        }
+                    }
+                    cx.notify();
+                })
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn stop_port_forward(&mut self, id: u64) {
+        // Kill the kubectl process
+        if let Some(pos) = self.pf_handles.iter().position(|(hid, _)| *hid == id) {
+            let (_, mut child) = self.pf_handles.remove(pos);
+            // kill_on_drop is set, but let's be explicit
+            let _ = child.start_kill();
+        }
+
+        // Update status
+        if let Some(entry) = self.port_forwards.iter_mut().find(|e| e.id == id) {
+            entry.status = PortForwardStatus::Stopped;
+            self.status_message = format!(
+                "Stopped port forward {} -> {}:{}",
+                entry.local_port, entry.pod_name, entry.remote_port
+            );
+        }
+    }
+
+    fn check_port_forward_health(&mut self) {
+        for (id, child) in &mut self.pf_handles {
+            if let Ok(Some(status)) = child.try_wait() {
+                let id = *id;
+                if let Some(entry) = self.port_forwards.iter_mut().find(|e| e.id == id) {
+                    if matches!(entry.status, PortForwardStatus::Active) {
+                        entry.status = PortForwardStatus::Failed(
+                            format!("Process exited with {status}")
+                        );
+                    }
+                }
+            }
+        }
+        // Remove finished handles
+        self.pf_handles.retain_mut(|(_, child)| child.try_wait().ok().flatten().is_none());
+    }
+
+    fn active_pf_count(&self) -> usize {
+        self.port_forwards
+            .iter()
+            .filter(|e| matches!(e.status, PortForwardStatus::Active))
+            .count()
+    }
+
     fn switch_detail_tab(&mut self, tab: DetailTab, cx: &mut Context<Self>) {
         self.detail_tab = tab;
         if tab == DetailTab::Logs && self.detail_logs.is_none() && !self.detail_logs_loading {
@@ -639,6 +858,28 @@ impl AppView {
     }
 
     fn move_selection(&mut self, delta: i32) {
+        if self.pf_dialog_visible {
+            let count = self.pf_dialog_ports.len();
+            if count == 0 {
+                return;
+            }
+            let new_idx = self.pf_dialog_selected as i32 + delta;
+            self.pf_dialog_selected = new_idx.clamp(0, count as i32 - 1) as usize;
+            // Update local port suggestion
+            if let Some(p) = self.pf_dialog_ports.get(self.pf_dialog_selected) {
+                self.pf_dialog_local_port = p.port.to_string();
+            }
+            return;
+        }
+        if self.pf_list_visible {
+            let count = self.port_forwards.len();
+            if count == 0 {
+                return;
+            }
+            let new_idx = self.pf_list_selected as i32 + delta;
+            self.pf_list_selected = new_idx.clamp(0, count as i32 - 1) as usize;
+            return;
+        }
         if self.ns_picker_visible {
             let filtered = self.filtered_namespaces();
             let count = filtered.len();
@@ -702,6 +943,13 @@ impl AppView {
         self.command_mode = false;
 
         if cmd.is_empty() {
+            return;
+        }
+
+        // Special commands
+        if matches!(cmd.as_str(), "pf" | "portforward" | "port-forwards") {
+            self.pf_list_visible = true;
+            self.pf_list_selected = 0;
             return;
         }
 
@@ -777,8 +1025,14 @@ impl Render for AppView {
 
         let weak = cx.weak_entity();
 
+        let pf_count = self.active_pf_count();
+        let status_msg = if pf_count > 0 {
+            format!("{} | PF: {} active", self.status_message, pf_count)
+        } else {
+            self.status_message.clone()
+        };
         let status = StatusBar::new(
-            &self.status_message,
+            &status_msg,
             self.command_mode,
             &self.command_input,
             self.filter_mode,
@@ -816,7 +1070,11 @@ impl Render for AppView {
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &GoBack, _window, cx| {
-                if this.ns_picker_visible {
+                if this.pf_dialog_visible {
+                    this.pf_dialog_visible = false;
+                } else if this.pf_list_visible {
+                    this.pf_list_visible = false;
+                } else if this.ns_picker_visible {
                     this.ns_picker_visible = false;
                     this.ns_picker_filter.clear();
                 } else if this.detail_visible {
@@ -836,7 +1094,9 @@ impl Render for AppView {
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &Enter, _window, cx| {
-                if this.ns_picker_visible {
+                if this.pf_dialog_visible {
+                    this.start_port_forward(cx);
+                } else if this.ns_picker_visible {
                     this.select_namespace(cx);
                 } else if this.filter_mode {
                     this.filter_mode = false;
@@ -877,7 +1137,9 @@ impl Render for AppView {
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &Backspace, _window, cx| {
-                if this.ns_picker_visible {
+                if this.pf_dialog_visible {
+                    this.pf_dialog_local_port.pop();
+                } else if this.ns_picker_visible {
                     this.ns_picker_filter.pop();
                     this.ns_picker_selected = 0;
                 } else if this.filter_mode {
@@ -925,8 +1187,32 @@ impl Render for AppView {
                     cx.notify();
                 }
             }))
+            .on_action(cx.listener(|this, _: &OpenPortForward, _window, cx| {
+                if !this.command_mode && !this.filter_mode && !this.pf_dialog_visible
+                    && !this.pf_list_visible && !this.ns_picker_visible
+                {
+                    this.open_port_forward_dialog(cx);
+                    cx.notify();
+                }
+            }))
+            .on_action(cx.listener(|this, _: &StopPortForward, _window, cx| {
+                if this.pf_list_visible {
+                    if let Some(entry) = this.port_forwards.get(this.pf_list_selected) {
+                        let id = entry.id;
+                        this.stop_port_forward(id);
+                    }
+                    cx.notify();
+                }
+            }))
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _window, cx| {
-                if this.ns_picker_visible {
+                if this.pf_dialog_visible {
+                    // Type digits for local port
+                    if let Some(key_char) = &event.keystroke.key_char {
+                        if key_char.chars().all(|c| c.is_ascii_digit()) {
+                            this.pf_dialog_local_port.push_str(key_char);
+                        }
+                    }
+                } else if this.ns_picker_visible {
                     if let Some(key_char) = &event.keystroke.key_char {
                         this.ns_picker_filter.push_str(key_char);
                         this.ns_picker_selected = 0;
@@ -1085,6 +1371,9 @@ impl Render for AppView {
             // Status bar
             .child(status.into_element());
 
+        // Check port-forward health
+        self.check_port_forward_health();
+
         // Namespace picker overlay
         if self.ns_picker_visible {
             let picker = NamespacePicker::new(
@@ -1096,6 +1385,28 @@ impl Render for AppView {
                 &spinner_text,
             );
             root = root.child(picker.into_element());
+        }
+
+        // Port forward dialog overlay
+        if self.pf_dialog_visible {
+            let dialog = PortForwardDialog::new(
+                &self.pf_dialog_pod_name,
+                &self.pf_dialog_ports,
+                self.pf_dialog_selected,
+                &self.pf_dialog_local_port,
+                self.pf_dialog_loading,
+                &spinner_text,
+            );
+            root = root.child(dialog.into_element());
+        }
+
+        // Port forward list overlay
+        if self.pf_list_visible {
+            let list = PortForwardList::new(
+                &self.port_forwards,
+                self.pf_list_selected,
+            );
+            root = root.child(list.into_element());
         }
 
         root

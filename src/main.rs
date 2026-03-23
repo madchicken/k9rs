@@ -106,6 +106,9 @@ fn main() {
             KeyBinding::new("4", app::DetailTab4, Some("app")),
             // Restart resource
             KeyBinding::new("r", app::RestartResource, Some("app")),
+            // Port forward
+            KeyBinding::new("f", app::OpenPortForward, Some("app")),
+            KeyBinding::new("d", app::StopPortForward, Some("app")),
             // Apply YAML
             KeyBinding::new("ctrl-s", app::ApplyYaml, Some("app")),
             // Namespace picker toggle

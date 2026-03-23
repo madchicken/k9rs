@@ -12,6 +12,7 @@ use kube::api::{Api, DeleteParams, ListParams, LogParams, Patch, PatchParams, Re
 use kube::{Client, Config};
 
 use crate::model::detail::{Condition, ContainerInfo, EventEntry, OwnerRef, PodInfo, ResourceDetail};
+use crate::model::port_forward::PodPort;
 use crate::model::table::{TableColumn, TableData, TableRow};
 
 /// Kubernetes client wrapper for k9rs
@@ -724,6 +725,57 @@ impl K8sClient {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
             Err(anyhow::anyhow!("{stderr}"))
         }
+    }
+
+    /// Get structured port information from a pod spec
+    pub async fn get_pod_ports(name: &str, namespace: &str) -> Result<Vec<PodPort>> {
+        let client = Self::client().await?;
+        let api: Api<Pod> = Api::namespaced(client, namespace);
+        let pod = api.get(name).await?;
+
+        let mut ports = vec![];
+        if let Some(spec) = &pod.spec {
+            for container in &spec.containers {
+                if let Some(container_ports) = &container.ports {
+                    for p in container_ports {
+                        ports.push(PodPort {
+                            container_name: container.name.clone(),
+                            port: p.container_port as u16,
+                            protocol: p.protocol.clone().unwrap_or_else(|| "TCP".into()),
+                            name: p.name.clone(),
+                        });
+                    }
+                }
+            }
+        }
+        Ok(ports)
+    }
+
+    /// Start a port forward using kubectl (spawns a background process).
+    /// Returns the child process handle for management.
+    pub async fn start_port_forward(
+        pod_name: &str,
+        namespace: &str,
+        local_port: u16,
+        remote_port: u16,
+    ) -> Result<tokio::process::Child> {
+        use tokio::process::Command;
+
+        let child = Command::new("kubectl")
+            .args([
+                "port-forward",
+                &format!("pod/{pod_name}"),
+                &format!("{local_port}:{remote_port}"),
+                "-n",
+                namespace,
+            ])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .context("Failed to start kubectl port-forward")?;
+
+        Ok(child)
     }
 
     /// Fetch events related to a specific resource
