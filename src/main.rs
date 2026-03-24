@@ -105,7 +105,7 @@ fn main() {
         // Key bindings
         cx.bind_keys([
             KeyBinding::new("cmd-q", Quit, None),
-            // App navigation
+            // App navigation — use "app" context which is on the root div
             KeyBinding::new("up", app::MoveUp, Some("app")),
             KeyBinding::new("k", app::MoveUp, Some("app")),
             KeyBinding::new("down", app::MoveDown, Some("app")),
@@ -114,23 +114,18 @@ fn main() {
             KeyBinding::new("escape", app::GoBack, Some("app")),
             KeyBinding::new(":", app::ActivateCommand, Some("app")),
             KeyBinding::new("backspace", app::Backspace, Some("app")),
-            // Filter
             KeyBinding::new("/", app::ActivateFilter, Some("app")),
-            // Panel navigation
             KeyBinding::new("tab", app::ToggleSidebar, Some("app")),
             // Detail tab switching
             KeyBinding::new("1", app::DetailTab1, Some("app")),
             KeyBinding::new("2", app::DetailTab2, Some("app")),
             KeyBinding::new("3", app::DetailTab3, Some("app")),
             KeyBinding::new("4", app::DetailTab4, Some("app")),
-            // Restart resource
+            // Actions
             KeyBinding::new("r", app::RestartResource, Some("app")),
-            // Port forward
             KeyBinding::new("f", app::OpenPortForward, Some("app")),
             KeyBinding::new("d", app::StopPortForward, Some("app")),
-            // Apply YAML
             KeyBinding::new("ctrl-s", app::ApplyYaml, Some("app")),
-            // Namespace picker toggle
             KeyBinding::new("ctrl-n", app::ToggleNamespacePicker, Some("app")),
         ]);
 
@@ -173,7 +168,10 @@ fn main() {
         window_handle
             .update(cx, |_root, window, cx| {
                 window.activate_window();
-                window.focus(&app_view.read(cx).focus_handle(cx));
+                // Focus the table so keyboard navigation works immediately
+                let app = app_view.read(cx);
+                let table_handle = app.table_state.read(cx).focus_handle(cx);
+                table_handle.focus(window);
             })
             .ok();
     });

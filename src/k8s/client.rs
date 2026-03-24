@@ -775,6 +775,118 @@ impl K8sClient {
         Ok(logs)
     }
 
+    /// Get logs for any resource type. For pods, fetches directly.
+    /// For workloads, finds pods via label selector and aggregates logs.
+    pub async fn get_resource_logs(
+        resource_type: &str,
+        name: &str,
+        namespace: &str,
+        tail_lines: Option<i64>,
+    ) -> Result<String> {
+        let client = Self::client().await?;
+
+        match resource_type {
+            "pods" => Self::get_pod_logs(name, namespace, None, tail_lines).await,
+            "deployments" | "statefulsets" | "daemonsets" | "replicasets" => {
+                // Get the workload's selector labels
+                let label_selector =
+                    Self::get_workload_label_selector(client.clone(), resource_type, name, namespace)
+                        .await?;
+                Self::get_logs_by_selector(client, namespace, &label_selector, tail_lines).await
+            }
+            "jobs" => {
+                let selector = format!("job-name={name}");
+                Self::get_logs_by_selector(client, namespace, &selector, tail_lines).await
+            }
+            other => Err(anyhow::anyhow!("Logs not supported for {other}")),
+        }
+    }
+
+    /// Get the label selector string from a workload's spec.selector.matchLabels
+    async fn get_workload_label_selector(
+        client: Client,
+        resource_type: &str,
+        name: &str,
+        namespace: &str,
+    ) -> Result<String> {
+        let labels: Option<std::collections::BTreeMap<String, String>> = match resource_type {
+            "deployments" => {
+                let api: Api<Deployment> = Api::namespaced(client, namespace);
+                let dep = api.get(name).await?;
+                dep.spec.and_then(|s| s.selector.match_labels)
+            }
+            "statefulsets" => {
+                let api: Api<StatefulSet> = Api::namespaced(client, namespace);
+                let sts = api.get(name).await?;
+                sts.spec.and_then(|s| s.selector.match_labels)
+            }
+            "daemonsets" => {
+                let api: Api<DaemonSet> = Api::namespaced(client, namespace);
+                let ds = api.get(name).await?;
+                ds.spec.and_then(|s| s.selector.match_labels)
+            }
+            "replicasets" => {
+                let api: Api<ReplicaSet> = Api::namespaced(client, namespace);
+                let rs = api.get(name).await?;
+                rs.spec.and_then(|s| s.selector.match_labels)
+            }
+            _ => None,
+        };
+
+        labels
+            .map(|l| {
+                l.iter()
+                    .map(|(k, v)| format!("{k}={v}"))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            })
+            .ok_or_else(|| anyhow::anyhow!("No selector found for {resource_type}/{name}"))
+    }
+
+    /// Fetch logs from all pods matching a label selector, prefixed with pod name
+    async fn get_logs_by_selector(
+        client: Client,
+        namespace: &str,
+        label_selector: &str,
+        tail_lines: Option<i64>,
+    ) -> Result<String> {
+        let api: Api<Pod> = Api::namespaced(client, namespace);
+        let lp = ListParams::default().labels(label_selector);
+        let pods = api.list(&lp).await?;
+
+        let per_pod_lines = tail_lines
+            .map(|t| t / std::cmp::max(pods.items.len() as i64, 1))
+            .map(|t| std::cmp::max(t, 20)); // at least 20 lines per pod
+
+        let mut all_logs = Vec::new();
+        for pod in &pods.items {
+            let pod_name = pod.name_any();
+            let mut params = LogParams {
+                tail_lines: per_pod_lines,
+                ..Default::default()
+            };
+            // Get all containers
+            params.container = None;
+
+            match api.logs(&pod_name, &params).await {
+                Ok(log) => {
+                    for line in log.lines() {
+                        all_logs.push(format!("[{pod_name}] {line}"));
+                    }
+                }
+                Err(e) => {
+                    all_logs.push(format!("[{pod_name}] Error fetching logs: {e}"));
+                }
+            }
+        }
+
+        if all_logs.is_empty() {
+            Ok("No logs found for matching pods".to_string())
+        } else {
+            Ok(all_logs.join("\n"))
+        }
+    }
+
     /// Restart a resource. For workloads (deployments, statefulsets, daemonsets),
     /// performs a rollout restart by patching the pod template annotation.
     /// For pods, deletes the pod (letting the controller recreate it).

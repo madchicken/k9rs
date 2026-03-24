@@ -50,7 +50,11 @@ impl DetailPanel {
             .unwrap_or(0);
 
         // Build the tab bar using gpui-component TabBar
-        let is_logs_disabled = self.detail.resource_type != "pods";
+        let log_supported = matches!(
+            self.detail.resource_type.as_str(),
+            "pods" | "deployments" | "statefulsets" | "daemonsets" | "replicasets" | "jobs"
+        );
+        let is_logs_disabled = !log_supported;
         let tabs = DetailTab::all();
 
         let mut tab_bar_widget = TabBar::new("detail-tabs")
@@ -620,11 +624,15 @@ impl DetailPanel {
     }
 
     fn render_logs(&self) -> Div {
-        if self.detail.resource_type != "pods" {
+        let log_supported = matches!(
+            self.detail.resource_type.as_str(),
+            "pods" | "deployments" | "statefulsets" | "daemonsets" | "replicasets" | "jobs"
+        );
+        if !log_supported {
             return div()
                 .p_4()
                 .text_color(rgb(0x6c7086))
-                .child("Logs are only available for pods");
+                .child("Logs not available for this resource type");
         }
 
         if self.logs_loading {

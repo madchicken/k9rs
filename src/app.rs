@@ -52,7 +52,7 @@ pub struct AppView {
     current_namespace: String,
     current_context: String,
     table_data: TableData,
-    table_state: Entity<TableState<ResourceTableDelegate>>,
+    pub table_state: Entity<TableState<ResourceTableDelegate>>,
     selected_row: usize,
     sidebar_selected: usize,
     command_input: String,
@@ -837,17 +837,26 @@ impl AppView {
     }
 
     fn load_detail_logs(&mut self, cx: &mut Context<Self>) {
-        let name = match &self.detail_data {
-            Some(d) if d.resource_type == "pods" => d.name.clone(),
-            _ => return,
+        let (name, resource_type) = match &self.detail_data {
+            Some(d) => (d.name.clone(), d.resource_type.clone()),
+            None => return,
         };
-        let namespace = self.current_namespace.clone();
 
+        // Check if this resource type supports logs
+        if !matches!(
+            resource_type.as_str(),
+            "pods" | "deployments" | "statefulsets" | "daemonsets" | "replicasets" | "jobs"
+        ) {
+            self.detail_logs = Some(format!("Logs not available for {resource_type}"));
+            return;
+        }
+
+        let namespace = self.current_namespace.clone();
         self.detail_logs_loading = true;
 
         cx.spawn(async move |this, cx: &mut AsyncApp| {
             let result = spawn_on_tokio(async move {
-                K8sClient::get_pod_logs(&name, &namespace, None, Some(500)).await
+                K8sClient::get_resource_logs(&resource_type, &name, &namespace, Some(500)).await
             })
             .await;
 
@@ -1046,6 +1055,12 @@ impl Render for AppView {
             self.ensure_yaml_editor(window, cx);
         }
 
+        // When detail is visible, focus the app root so key bindings work
+        // (the table is not rendered, so its focus handle is stale)
+        if self.detail_visible && !self.focus_handle.is_focused(window) {
+            self.focus_handle.focus(window);
+        }
+
         let header = Header::new(
             &self.current_context,
             &self.current_namespace,
@@ -1112,7 +1127,7 @@ impl Render for AppView {
                 }
                 cx.notify();
             }))
-            .on_action(cx.listener(|this, _: &GoBack, _window, cx| {
+            .on_action(cx.listener(|this, _: &GoBack, window, cx| {
                 if this.pf_dialog_visible {
                     this.pf_dialog_visible = false;
                 } else if this.pf_list_visible {
@@ -1122,6 +1137,9 @@ impl Render for AppView {
                     this.ns_picker_filter.clear();
                 } else if this.detail_visible {
                     this.close_detail();
+                    // Re-focus the table
+                    let handle = this.table_state.read(cx).focus_handle(cx);
+                    handle.focus(window);
                 } else if this.filter_mode {
                     this.filter_mode = false;
                     this.filter_text.clear();
@@ -1132,12 +1150,14 @@ impl Render for AppView {
                     this.command_input.clear();
                 } else if this.active_panel == FocusPanel::Sidebar {
                     this.active_panel = FocusPanel::Table;
+                    let handle = this.table_state.read(cx).focus_handle(cx);
+                    handle.focus(window);
                 } else if this.current_resource == "namespaces" {
                     this.switch_resource("pods", cx);
                 }
                 cx.notify();
             }))
-            .on_action(cx.listener(|this, _: &Enter, _window, cx| {
+            .on_action(cx.listener(|this, _: &Enter, window, cx| {
                 if this.pf_dialog_visible {
                     this.start_port_forward(cx);
                 } else if this.ns_picker_visible {
@@ -1153,6 +1173,9 @@ impl Render for AppView {
                         let api_name = entry.api_name.to_string();
                         this.active_panel = FocusPanel::Table;
                         this.switch_resource(&api_name, cx);
+                        // Focus table for keyboard nav
+                        let handle = this.table_state.read(cx).focus_handle(cx);
+                        handle.focus(window);
                     }
                 } else if this.current_resource == "namespaces" {
                     if let Some(row) = this.table_data.rows.get(this.selected_row) {
@@ -1171,11 +1194,20 @@ impl Render for AppView {
                 this.toggle_namespace_picker(cx);
                 cx.notify();
             }))
-            .on_action(cx.listener(|this, _: &ToggleSidebar, _window, cx| {
+            .on_action(cx.listener(|this, _: &ToggleSidebar, window, cx| {
                 if !this.detail_visible {
                     this.active_panel = match this.active_panel {
-                        FocusPanel::Sidebar => FocusPanel::Table,
-                        FocusPanel::Table => FocusPanel::Sidebar,
+                        FocusPanel::Sidebar => {
+                            // Focus the table so keyboard nav works
+                            let handle = this.table_state.read(cx).focus_handle(cx);
+                            handle.focus(window);
+                            FocusPanel::Table
+                        }
+                        FocusPanel::Table => {
+                            // Focus back to app root for sidebar nav
+                            this.focus_handle.focus(window);
+                            FocusPanel::Sidebar
+                        }
                     };
                 }
                 cx.notify();
