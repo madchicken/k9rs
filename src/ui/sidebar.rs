@@ -3,7 +3,7 @@ use gpui_component::sidebar::{
     Sidebar as GpuiSidebar, SidebarFooter, SidebarGroup, SidebarHeader, SidebarMenu,
     SidebarMenuItem,
 };
-use gpui_component::{h_flex, IconName, Sizable, Side};
+use gpui_component::{h_flex, IconName, Side, Sizable};
 
 use crate::model::resources::RESOURCES;
 

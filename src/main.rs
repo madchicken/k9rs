@@ -47,18 +47,18 @@ fn main() {
             theme.mono_font_size = px(14.);
 
             // Catppuccin Mocha palette
-            let base = hsla(232. / 360., 0.23, 0.18, 1.0);        // #1e1e2e
-            let mantle = hsla(233. / 360., 0.23, 0.15, 1.0);      // #181825
-            let surface0 = hsla(230. / 360., 0.14, 0.24, 1.0);    // #313244
-            let surface1 = hsla(231. / 360., 0.16, 0.34, 1.0);    // #45475a
-            let surface2 = hsla(232. / 360., 0.12, 0.39, 1.0);    // #585b70
-            let overlay0 = hsla(228. / 360., 0.11, 0.48, 1.0);    // #6c7086
-            let text = hsla(226. / 360., 0.64, 0.88, 1.0);        // #cdd6f4
-            let subtext = hsla(227. / 360., 0.35, 0.80, 1.0);     // #bac2de
-            let blue = hsla(217. / 360., 0.92, 0.76, 1.0);        // #89b4fa
-            let green = hsla(115. / 360., 0.54, 0.76, 1.0);       // #a6e3a1
-            let red = hsla(343. / 360., 0.81, 0.75, 1.0);         // #f38ba8
-            let yellow = hsla(40. / 360., 0.86, 0.83, 1.0);       // #f9e2af
+            let base = hsla(232. / 360., 0.23, 0.18, 1.0); // #1e1e2e
+            let mantle = hsla(233. / 360., 0.23, 0.15, 1.0); // #181825
+            let surface0 = hsla(230. / 360., 0.14, 0.24, 1.0); // #313244
+            let surface1 = hsla(231. / 360., 0.16, 0.34, 1.0); // #45475a
+            let surface2 = hsla(232. / 360., 0.12, 0.39, 1.0); // #585b70
+            let overlay0 = hsla(228. / 360., 0.11, 0.48, 1.0); // #6c7086
+            let text = hsla(226. / 360., 0.64, 0.88, 1.0); // #cdd6f4
+            let subtext = hsla(227. / 360., 0.35, 0.80, 1.0); // #bac2de
+            let blue = hsla(217. / 360., 0.92, 0.76, 1.0); // #89b4fa
+            let green = hsla(115. / 360., 0.54, 0.76, 1.0); // #a6e3a1
+            let red = hsla(343. / 360., 0.81, 0.75, 1.0); // #f38ba8
+            let yellow = hsla(40. / 360., 0.86, 0.83, 1.0); // #f9e2af
 
             // Core colors
             theme.colors.background = base;

@@ -60,56 +60,47 @@ impl NamespacePicker {
     ) -> Div {
         let on_item_click = std::rc::Rc::new(on_item_click);
         let colors = &self.colors;
-        let mut panel = div()
-            .w(px(400.0))
-            .max_h(px(500.0))
-            .bg(colors.muted)
-            .border_1()
-            .border_color(colors.selection)
-            .rounded_lg()
-            .flex()
-            .flex_col()
-            .overflow_hidden()
-            // Title
-            .child(
-                div()
-                    .px_3()
-                    .py_2()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .border_b_1()
-                    .border_color(colors.border)
-                    .child(
-                        div()
-                            .text_color(colors.primary)
-                            .child("Switch Namespace"),
-                    ),
-            )
-            // Filter input display
-            .child(
-                div()
-                    .px_3()
-                    .py_2()
-                    .border_b_1()
-                    .border_color(colors.border)
-                    .flex()
-                    .gap_1()
-                    .child(
-                        div()
-                            .text_color(colors.muted_foreground)
-                            .child("Filter:"),
-                    )
-                    .child(
-                        div()
-                            .text_color(colors.foreground)
-                            .child(if self.filter.is_empty() {
+        let mut panel =
+            div()
+                .w(px(400.0))
+                .max_h(px(500.0))
+                .bg(colors.muted)
+                .border_1()
+                .border_color(colors.selection)
+                .rounded_lg()
+                .flex()
+                .flex_col()
+                .overflow_hidden()
+                // Title
+                .child(
+                    div()
+                        .px_3()
+                        .py_2()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .border_b_1()
+                        .border_color(colors.border)
+                        .child(div().text_color(colors.primary).child("Switch Namespace")),
+                )
+                // Filter input display
+                .child(
+                    div()
+                        .px_3()
+                        .py_2()
+                        .border_b_1()
+                        .border_color(colors.border)
+                        .flex()
+                        .gap_1()
+                        .child(div().text_color(colors.muted_foreground).child("Filter:"))
+                        .child(div().text_color(colors.foreground).child(
+                            if self.filter.is_empty() {
                                 SharedString::from("(type to filter)")
                             } else {
                                 SharedString::from(self.filter.clone())
-                            }),
-                    ),
-            );
+                            },
+                        )),
+                );
 
         // Namespace list
         let mut list = div().flex().flex_col();
@@ -177,11 +168,7 @@ impl NamespacePicker {
                     });
 
                 if is_current {
-                    row = row.child(
-                        div()
-                            .text_color(colors.success)
-                            .child("*"),
-                    );
+                    row = row.child(div().text_color(colors.success).child("*"));
                 }
 
                 row = row.child(SharedString::from(ns.clone()));

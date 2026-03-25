@@ -98,11 +98,11 @@ pub fn build_header(
                         for (display, api_name) in &resource_list {
                             let api = api_name.to_string();
                             let cb = on_change.clone();
-                            menu = menu.item(
-                                PopupMenuItem::new(*display).on_click(move |_ev, window, cx| {
+                            menu = menu.item(PopupMenuItem::new(*display).on_click(
+                                move |_ev, window, cx| {
                                     cb(api.clone(), window, cx);
-                                }),
-                            );
+                                },
+                            ));
                         }
                         menu
                     }),

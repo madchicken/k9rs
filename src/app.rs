@@ -217,10 +217,8 @@ impl AppView {
 
     fn load_available_namespaces(&mut self, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx: &mut AsyncApp| {
-            let result = spawn_on_tokio(async move {
-                K8sClient::list_namespace_names().await
-            })
-            .await;
+            let result =
+                spawn_on_tokio(async move { K8sClient::list_namespace_names().await }).await;
 
             cx.update(|cx| {
                 this.update(cx, |this, cx| {
@@ -1152,22 +1150,28 @@ impl Render for AppView {
             &self.current_resource,
             &self.available_contexts,
             std::rc::Rc::new(move |ctx, _window, cx| {
-                weak_ctx.update(cx, |this, cx| {
-                    this.switch_context(&ctx, cx);
-                    cx.notify();
-                }).ok();
+                weak_ctx
+                    .update(cx, |this, cx| {
+                        this.switch_context(&ctx, cx);
+                        cx.notify();
+                    })
+                    .ok();
             }),
             std::rc::Rc::new(move |_ev, _window, cx| {
-                weak_ns.update(cx, |this, cx| {
-                    this.toggle_namespace_picker(cx);
-                    cx.notify();
-                }).ok();
+                weak_ns
+                    .update(cx, |this, cx| {
+                        this.toggle_namespace_picker(cx);
+                        cx.notify();
+                    })
+                    .ok();
             }),
             std::rc::Rc::new(move |res, _window, cx| {
-                weak_res.update(cx, |this, cx| {
-                    this.switch_resource(&res, cx);
-                    cx.notify();
-                }).ok();
+                weak_res
+                    .update(cx, |this, cx| {
+                        this.switch_resource(&res, cx);
+                        cx.notify();
+                    })
+                    .ok();
             }),
             cx,
         );
@@ -1416,23 +1420,21 @@ impl Render for AppView {
                 let detail_visible = self.detail_visible;
 
                 let current_resource = self.current_resource.clone();
-                let mut body = div().flex().flex_1().overflow_hidden().child(
-                    build_sidebar(
-                        &current_resource,
-                        pf_count,
-                        move |idx, _ev, _window, cx| {
-                            weak_sidebar
-                                .update(cx, |this, cx| {
-                                    if let Some(entry) = RESOURCES.get(idx) {
-                                        this.switch_resource(entry.api_name, cx);
-                                        this.active_panel = FocusPanel::Table;
-                                    }
-                                    cx.notify();
-                                })
-                                .ok();
-                        },
-                    ),
-                );
+                let mut body = div().flex().flex_1().overflow_hidden().child(build_sidebar(
+                    &current_resource,
+                    pf_count,
+                    move |idx, _ev, _window, cx| {
+                        weak_sidebar
+                            .update(cx, |this, cx| {
+                                if let Some(entry) = RESOURCES.get(idx) {
+                                    this.switch_resource(entry.api_name, cx);
+                                    this.active_panel = FocusPanel::Table;
+                                }
+                                cx.notify();
+                            })
+                            .ok();
+                    },
+                ));
 
                 if detail_visible {
                     // Detail panel
@@ -1451,7 +1453,9 @@ impl Render for AppView {
                                             .child(spinner_text.clone()),
                                     )
                                     .child(
-                                        div().text_color(cx.theme().muted_foreground).child("Loading details..."),
+                                        div()
+                                            .text_color(cx.theme().muted_foreground)
+                                            .child("Loading details..."),
                                     ),
                             ),
                         );
@@ -1469,34 +1473,32 @@ impl Render for AppView {
                         let weak_detail = weak.clone();
                         let weak_restart = weak.clone();
                         let weak_pod = weak.clone();
-                        body = body.child(div().flex_1().child(
-                            panel.into_element_with_clicks(
-                                move |tab, _window, cx| {
-                                    weak_detail
-                                        .update(cx, |this, cx| {
-                                            this.switch_detail_tab(tab, cx);
-                                            cx.notify();
-                                        })
-                                        .ok();
-                                },
-                                move |_ev, _window, cx| {
-                                    weak_restart
-                                        .update(cx, |this, cx| {
-                                            this.restart_current_resource(cx);
-                                            cx.notify();
-                                        })
-                                        .ok();
-                                },
-                                move |pod_name, _ev, _window, cx| {
-                                    weak_pod
-                                        .update(cx, |this, cx| {
-                                            this.open_pod_detail_by_name(&pod_name, cx);
-                                            cx.notify();
-                                        })
-                                        .ok();
-                                },
-                            ),
-                        ));
+                        body = body.child(div().flex_1().child(panel.into_element_with_clicks(
+                            move |tab, _window, cx| {
+                                weak_detail
+                                    .update(cx, |this, cx| {
+                                        this.switch_detail_tab(tab, cx);
+                                        cx.notify();
+                                    })
+                                    .ok();
+                            },
+                            move |_ev, _window, cx| {
+                                weak_restart
+                                    .update(cx, |this, cx| {
+                                        this.restart_current_resource(cx);
+                                        cx.notify();
+                                    })
+                                    .ok();
+                            },
+                            move |pod_name, _ev, _window, cx| {
+                                weak_pod
+                                    .update(cx, |this, cx| {
+                                        this.open_pod_detail_by_name(&pod_name, cx);
+                                        cx.notify();
+                                    })
+                                    .ok();
+                            },
+                        )));
                     }
                 } else if loading {
                     body = body.child(
@@ -1556,12 +1558,14 @@ impl Render for AppView {
             );
             let weak_ns = weak.clone();
             root = root.child(picker.into_element(move |idx, _ev, _window, cx| {
-                weak_ns.update(cx, |this, cx| {
-                    // Select the clicked namespace
-                    this.ns_picker_selected = idx;
-                    this.select_namespace(cx);
-                    cx.notify();
-                }).ok();
+                weak_ns
+                    .update(cx, |this, cx| {
+                        // Select the clicked namespace
+                        this.ns_picker_selected = idx;
+                        this.select_namespace(cx);
+                        cx.notify();
+                    })
+                    .ok();
             }));
         }
 
@@ -1581,7 +1585,11 @@ impl Render for AppView {
 
         // Port forward list overlay
         if self.pf_list_visible {
-            let list = PortForwardList::new(&self.port_forwards, self.pf_list_selected, PanelColors::from_theme(cx));
+            let list = PortForwardList::new(
+                &self.port_forwards,
+                self.pf_list_selected,
+                PanelColors::from_theme(cx),
+            );
             root = root.child(list.into_element());
         }
 

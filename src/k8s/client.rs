@@ -32,11 +32,7 @@ impl K8sClient {
     /// List available contexts from kubeconfig
     pub fn list_contexts() -> Result<Vec<String>> {
         let kubeconfig = kube::config::Kubeconfig::read().context("Failed to read kubeconfig")?;
-        Ok(kubeconfig
-            .contexts
-            .iter()
-            .map(|c| c.name.clone())
-            .collect())
+        Ok(kubeconfig.contexts.iter().map(|c| c.name.clone()).collect())
     }
 
     /// Create a kube::Client from the default kubeconfig
@@ -799,9 +795,13 @@ impl K8sClient {
             "pods" => Self::get_pod_logs(name, namespace, None, tail_lines).await,
             "deployments" | "statefulsets" | "daemonsets" | "replicasets" => {
                 // Get the workload's selector labels
-                let label_selector =
-                    Self::get_workload_label_selector(client.clone(), resource_type, name, namespace)
-                        .await?;
+                let label_selector = Self::get_workload_label_selector(
+                    client.clone(),
+                    resource_type,
+                    name,
+                    namespace,
+                )
+                .await?;
                 Self::get_logs_by_selector(client, namespace, &label_selector, tail_lines).await
             }
             "jobs" => {
