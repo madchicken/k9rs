@@ -673,13 +673,11 @@ impl DetailPanel {
                             .overflow_x_hidden()
                             .child(SharedString::from(ev.from.clone())),
                     )
-                    .child(
-                        copyable_value(
-                            &format!("ev-msg-{i}"),
-                            &ev.message,
-                            self.colors.secondary_foreground,
-                        ),
-                    ),
+                    .child(copyable_value(
+                        &format!("ev-msg-{i}"),
+                        &ev.message,
+                        self.colors.secondary_foreground,
+                    )),
             );
         }
 
@@ -729,12 +727,7 @@ impl DetailPanel {
                 let mut content = div().flex().flex_col().p_2().font_family("Monaco");
                 for (i, line) in logs.lines().enumerate() {
                     content = content.child(
-                        copyable_value(
-                            &format!("log-{i}"),
-                            line,
-                            self.colors.foreground,
-                        )
-                        .text_sm(),
+                        copyable_value(&format!("log-{i}"), line, self.colors.foreground).text_sm(),
                     );
                 }
                 content

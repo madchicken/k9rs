@@ -81,11 +81,7 @@ impl NamespacePicker {
                     .gap_2()
                     .border_b_1()
                     .border_color(colors.border)
-                    .child(
-                        div()
-                            .text_color(colors.primary)
-                            .child("Switch Namespace"),
-                    ),
+                    .child(div().text_color(colors.primary).child("Switch Namespace")),
             )
             // Live filter indicator — only shown when typing
             .when(!self.filter.is_empty(), |this| {

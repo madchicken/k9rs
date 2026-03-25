@@ -47,16 +47,8 @@ impl StatusBar {
                 .flex()
                 .gap_2()
                 .items_center()
-                .child(
-                    div()
-                        .text_color(primary)
-                        .child("⌕"),
-                )
-                .child(
-                    div()
-                        .text_color(foreground)
-                        .child(self.filter_text),
-                )
+                .child(div().text_color(primary).child("⌕"))
+                .child(div().text_color(foreground).child(self.filter_text))
         } else {
             let mut row = div()
                 .flex()
@@ -75,11 +67,9 @@ impl StatusBar {
                 );
             }
 
-            row = row.child(
-                div()
-                    .text_color(muted_fg)
-                    .child("':' cmd | / filter | ↑↓ nav | Ctrl-N ns | Ctrl-K ctx | Ctrl-R res | Cmd-Q quit"),
-            );
+            row = row.child(div().text_color(muted_fg).child(
+                "':' cmd | / filter | ↑↓ nav | Ctrl-N ns | Ctrl-K ctx | Ctrl-R res | Cmd-Q quit",
+            ));
 
             row
         };

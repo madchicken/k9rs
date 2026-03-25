@@ -92,11 +92,7 @@ impl TableDelegate for ResourceTableDelegate {
         _window: &mut Window,
         cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
-        let name = self
-            .display_names
-            .get(col_ix)
-            .cloned()
-            .unwrap_or_default();
+        let name = self.display_names.get(col_ix).cloned().unwrap_or_default();
 
         let primary = cx.theme().primary;
 
