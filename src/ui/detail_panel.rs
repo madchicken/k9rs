@@ -352,37 +352,23 @@ impl DetailPanel {
                                     .child(SharedString::from(c.state.clone())),
                             ),
                     )
-                    .child({
-                        let image_text = c.image.clone();
+                    .child(
                         div()
                             .flex()
                             .gap_4()
                             .text_sm()
                             .text_color(self.colors.muted_foreground)
+                            .items_center()
                             .child(
                                 div()
                                     .flex()
                                     .gap_1()
                                     .items_center()
                                     .child("Image:")
-                                    .child(
-                                        div()
-                                            .text_color(self.colors.secondary_foreground)
-                                            .child(SharedString::from(c.image.clone())),
-                                    )
-                                    .child(Component::new(
-                                        Button::new("copy-image")
-                                            .ghost()
-                                            .compact()
-                                            .small()
-                                            .icon(IconName::Copy)
-                                            .on_click(move |_ev, _window, cx| {
-                                                cx.write_to_clipboard(
-                                                    ClipboardItem::new_string(
-                                                        image_text.clone(),
-                                                    ),
-                                                );
-                                            }),
+                                    .child(copyable_value(
+                                        &format!("img-{}", c.name),
+                                        &c.image,
+                                        self.colors.secondary_foreground,
                                     )),
                             )
                             .child(
@@ -402,8 +388,8 @@ impl DetailPanel {
                                         .text_color(self.colors.secondary_foreground)
                                         .child(SharedString::from(c.restart_count.to_string())),
                                 ),
-                            )
-                    });
+                            ),
+                    );
 
                 if !c.ports.is_empty() {
                     container_div = container_div.child(
@@ -766,19 +752,24 @@ fn copyable_value(id: &str, value: &str, color: Hsla) -> Stateful<Div> {
         .items_center()
         .gap_1()
         .cursor_pointer()
+        // Flash the whole row on click for feedback
+        .active(|s| s.opacity(0.5))
         .child(
             div()
                 .text_color(color)
                 .overflow_x_hidden()
                 .child(SharedString::from(val)),
         )
+        // Copy icon — shown on hover
         .child(
             div()
-                .text_color(color)
-                .text_xs()
                 .invisible()
                 .group_hover(group_id2, |s| s.visible())
-                .child("⎘"),
+                .child(Component::new(
+                    gpui_component::Icon::new(IconName::Copy)
+                        .size_3()
+                        .text_color(color),
+                )),
         )
         .on_click(move |_ev, _window, cx| {
             cx.write_to_clipboard(ClipboardItem::new_string(val_for_click.clone()));
