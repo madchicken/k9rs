@@ -1,4 +1,5 @@
 use gpui::*;
+use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputState};
 use gpui_component::tab::{Tab, TabBar};
 use gpui_component::{IconName, Sizable};
@@ -44,7 +45,7 @@ impl DetailPanel {
     pub fn into_element_with_clicks(
         self,
         on_tab_click: impl Fn(DetailTab, &mut Window, &mut App) + 'static,
-        on_restart: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
+        on_restart: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
         on_pod_click: impl Fn(String, &MouseDownEvent, &mut Window, &mut App) + 'static,
     ) -> Div {
         let on_pod_click = std::rc::Rc::new(on_pod_click);
@@ -97,25 +98,17 @@ impl DetailPanel {
         let mut right = div().flex().items_center().gap_2().pr_2();
 
         if self.can_restart {
-            let bg_with_alpha = Hsla { a: 0.67, ..self.colors.background };
-            right = right.child(
-                div()
-                    .px_2()
-                    .py_px()
-                    .bg(self.colors.danger)
-                    .text_color(self.colors.background)
-                    .text_xs()
-                    .rounded_sm()
-                    .cursor_pointer()
-                    .hover(|s| s.bg(self.colors.danger_hover))
-                    .on_mouse_down(MouseButton::Left, move |ev, window, cx| {
+            right = right.child(Component::new(
+                Button::new("restart-btn")
+                    .danger()
+                    .label("Restart")
+                    .icon(IconName::Redo)
+                    .small()
+                    .compact()
+                    .on_click(move |ev, window, cx| {
                         on_restart(ev, window, cx);
-                    })
-                    .flex()
-                    .gap_1()
-                    .child("↻ Restart")
-                    .child(div().text_color(bg_with_alpha).child("(r)")),
-            );
+                    }),
+            ));
         }
 
         right = right.child(
@@ -330,7 +323,6 @@ impl DetailPanel {
                     )
                     .child({
                         let image_text = c.image.clone();
-                        let link_hover = self.colors.link_hover;
                         div()
                             .flex()
                             .gap_4()
@@ -347,26 +339,20 @@ impl DetailPanel {
                                             .text_color(self.colors.secondary_foreground)
                                             .child(SharedString::from(c.image.clone())),
                                     )
-                                    .child(
-                                        div()
-                                            .cursor_pointer()
-                                            .text_color(self.colors.muted_foreground)
-                                            .hover(move |s| s.text_color(link_hover))
-                                            .on_mouse_down(
-                                                MouseButton::Left,
-                                                move |_ev, _window, cx| {
-                                                    cx.write_to_clipboard(
-                                                        ClipboardItem::new_string(
-                                                            image_text.clone(),
-                                                        ),
-                                                    );
-                                                },
-                                            )
-                                            .child(Component::new(
-                                                gpui_component::Icon::new(IconName::Copy)
-                                                    .with_size(gpui_component::Size::XSmall),
-                                            )),
-                                    ),
+                                    .child(Component::new(
+                                        Button::new("copy-image")
+                                            .ghost()
+                                            .compact()
+                                            .small()
+                                            .icon(IconName::Copy)
+                                            .on_click(move |_ev, _window, cx| {
+                                                cx.write_to_clipboard(
+                                                    ClipboardItem::new_string(
+                                                        image_text.clone(),
+                                                    ),
+                                                );
+                                            }),
+                                    )),
                             )
                             .child(
                                 div().flex().gap_1().child("Ready:").child(
