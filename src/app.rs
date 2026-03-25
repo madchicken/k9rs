@@ -1,6 +1,7 @@
 use gpui::*;
 use gpui_component::input::InputState;
 use gpui_component::table::{Table, TableEvent, TableState};
+use gpui_component::theme::ActiveTheme;
 
 use crate::k8s::{runtime::spawn_on_tokio, K8sClient};
 use crate::model::detail::{DetailTab, ResourceDetail};
@@ -15,6 +16,7 @@ use crate::ui::port_forward_list::PortForwardList;
 use crate::ui::resource_table::ResourceTableDelegate;
 use crate::ui::sidebar::Sidebar;
 use crate::ui::status_bar::StatusBar;
+use crate::ui::theme::PanelColors;
 
 actions!(
     app,
@@ -1103,8 +1105,8 @@ impl Render for AppView {
             .size_full()
             .flex()
             .flex_col()
-            .bg(rgb(0x1e1e2e))
-            .text_color(rgb(0xcdd6f4))
+            .bg(cx.theme().background)
+            .text_color(cx.theme().foreground)
             .on_action(cx.listener(|this, _: &MoveUp, _window, cx| {
                 this.move_selection(-1);
                 cx.notify();
@@ -1311,14 +1313,14 @@ impl Render for AppView {
                 cx.notify();
             }))
             // Header
-            .child(header.into_element())
+            .child(header.into_element(cx))
             // Body: sidebar + content
             .child({
                 let weak_sidebar = weak.clone();
                 let detail_visible = self.detail_visible;
 
                 let mut body = div().flex().flex_1().overflow_hidden().child(
-                    sidebar.into_element_with_clicks(move |idx, _ev, _window, cx| {
+                    sidebar.into_element_with_clicks(cx, move |idx, _ev, _window, cx| {
                         weak_sidebar
                             .update(cx, |this, cx| {
                                 if let Some(entry) = RESOURCES.get(idx) {
@@ -1344,11 +1346,11 @@ impl Render for AppView {
                                     .child(
                                         div()
                                             .text_xl()
-                                            .text_color(rgb(0x89b4fa))
+                                            .text_color(cx.theme().primary)
                                             .child(spinner_text.clone()),
                                     )
                                     .child(
-                                        div().text_color(rgb(0x6c7086)).child("Loading details..."),
+                                        div().text_color(cx.theme().muted_foreground).child("Loading details..."),
                                     ),
                             ),
                         );
@@ -1361,6 +1363,7 @@ impl Render for AppView {
                             SPINNER_FRAMES[self.spinner_frame % SPINNER_FRAMES.len()],
                             self.can_restart(),
                             self.yaml_editor.clone(),
+                            PanelColors::from_theme(cx),
                         );
                         let weak_detail = weak.clone();
                         let weak_restart = weak.clone();
@@ -1411,10 +1414,10 @@ impl Render for AppView {
                                     .child(
                                         div()
                                             .text_xl()
-                                            .text_color(rgb(0x89b4fa))
+                                            .text_color(cx.theme().primary)
                                             .child(spinner_text.clone()),
                                     )
-                                    .child(div().text_color(rgb(0x6c7086)).child(
+                                    .child(div().text_color(cx.theme().muted_foreground).child(
                                         SharedString::from(format!(
                                             "Loading {}...",
                                             loading_resource
@@ -1434,7 +1437,7 @@ impl Render for AppView {
                 body
             })
             // Status bar
-            .child(status.into_element());
+            .child(status.into_element(cx));
 
         // Check port-forward health
         self.check_port_forward_health();
@@ -1448,6 +1451,7 @@ impl Render for AppView {
                 &self.current_namespace,
                 self.ns_picker_loading,
                 &spinner_text,
+                PanelColors::from_theme(cx),
             );
             root = root.child(picker.into_element());
         }
@@ -1461,13 +1465,14 @@ impl Render for AppView {
                 &self.pf_dialog_local_port,
                 self.pf_dialog_loading,
                 &spinner_text,
+                PanelColors::from_theme(cx),
             );
             root = root.child(dialog.into_element());
         }
 
         // Port forward list overlay
         if self.pf_list_visible {
-            let list = PortForwardList::new(&self.port_forwards, self.pf_list_selected);
+            let list = PortForwardList::new(&self.port_forwards, self.pf_list_selected, PanelColors::from_theme(cx));
             root = root.child(list.into_element());
         }
 

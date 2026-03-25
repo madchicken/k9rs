@@ -6,3 +6,4 @@ pub mod port_forward_list;
 pub mod resource_table;
 pub mod sidebar;
 pub mod status_bar;
+pub mod theme;

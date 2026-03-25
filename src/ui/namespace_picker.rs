@@ -1,5 +1,7 @@
 use gpui::*;
 
+use crate::ui::theme::PanelColors;
+
 /// A modal overlay for selecting a namespace
 pub struct NamespacePicker {
     namespaces: Vec<String>,
@@ -8,6 +10,7 @@ pub struct NamespacePicker {
     current_namespace: String,
     loading: bool,
     spinner: String,
+    colors: PanelColors,
 }
 
 impl NamespacePicker {
@@ -18,6 +21,7 @@ impl NamespacePicker {
         current_namespace: &str,
         loading: bool,
         spinner: &str,
+        colors: PanelColors,
     ) -> Self {
         Self {
             namespaces: namespaces.to_vec(),
@@ -26,17 +30,19 @@ impl NamespacePicker {
             current_namespace: current_namespace.to_string(),
             loading,
             spinner: spinner.to_string(),
+            colors,
         }
     }
 
     pub fn into_element(self) -> Div {
         // Full-screen backdrop to capture clicks and prevent pass-through
+        let overlay = self.colors.overlay;
         div()
             .absolute()
             .top(px(0.0))
             .left(px(0.0))
             .size_full()
-            .bg(rgba(0x00000088))
+            .bg(overlay)
             .flex()
             .justify_center()
             .pt_8()
@@ -47,12 +53,13 @@ impl NamespacePicker {
     }
 
     fn render_panel(self) -> Div {
+        let colors = &self.colors;
         let mut panel = div()
             .w(px(400.0))
             .max_h(px(500.0))
-            .bg(rgb(0x313244))
+            .bg(colors.muted)
             .border_1()
-            .border_color(rgb(0x585b70))
+            .border_color(colors.selection)
             .rounded_lg()
             .flex()
             .flex_col()
@@ -66,10 +73,10 @@ impl NamespacePicker {
                     .items_center()
                     .gap_2()
                     .border_b_1()
-                    .border_color(rgb(0x45475a))
+                    .border_color(colors.border)
                     .child(
                         div()
-                            .text_color(rgb(0x89b4fa))
+                            .text_color(colors.primary)
                             .child("Switch Namespace"),
                     ),
             )
@@ -79,17 +86,17 @@ impl NamespacePicker {
                     .px_3()
                     .py_2()
                     .border_b_1()
-                    .border_color(rgb(0x45475a))
+                    .border_color(colors.border)
                     .flex()
                     .gap_1()
                     .child(
                         div()
-                            .text_color(rgb(0x6c7086))
+                            .text_color(colors.muted_foreground)
                             .child("Filter:"),
                     )
                     .child(
                         div()
-                            .text_color(rgb(0xcdd6f4))
+                            .text_color(colors.foreground)
                             .child(if self.filter.is_empty() {
                                 SharedString::from("(type to filter)")
                             } else {
@@ -112,12 +119,12 @@ impl NamespacePicker {
                     .gap_2()
                     .child(
                         div()
-                            .text_color(rgb(0x89b4fa))
+                            .text_color(colors.primary)
                             .child(SharedString::from(self.spinner)),
                     )
                     .child(
                         div()
-                            .text_color(rgb(0x6c7086))
+                            .text_color(colors.muted_foreground)
                             .child("Loading namespaces..."),
                     ),
             );
@@ -126,7 +133,7 @@ impl NamespacePicker {
                 div()
                     .px_3()
                     .py_2()
-                    .text_color(rgb(0x6c7086))
+                    .text_color(colors.muted_foreground)
                     .child("No matching namespaces"),
             );
         } else {
@@ -135,17 +142,17 @@ impl NamespacePicker {
                 let is_current = *ns == self.current_namespace;
 
                 let bg = if is_selected {
-                    rgb(0x585b70)
+                    colors.selection
                 } else {
-                    rgb(0x313244)
+                    colors.muted
                 };
 
                 let text_color = if is_current {
-                    rgb(0xa6e3a1)
+                    colors.success
                 } else if is_selected {
-                    rgb(0xcdd6f4)
+                    colors.foreground
                 } else {
-                    rgb(0xbac2de)
+                    colors.secondary_foreground
                 };
 
                 let mut row = div()
@@ -159,7 +166,7 @@ impl NamespacePicker {
                 if is_current {
                     row = row.child(
                         div()
-                            .text_color(rgb(0xa6e3a1))
+                            .text_color(colors.success)
                             .child("*"),
                     );
                 }
@@ -178,8 +185,8 @@ impl NamespacePicker {
                 .px_3()
                 .py_1()
                 .border_t_1()
-                .border_color(rgb(0x45475a))
-                .text_color(rgb(0x6c7086))
+                .border_color(colors.border)
+                .text_color(colors.muted_foreground)
                 .child("j/k: navigate | Enter: select | Esc: cancel | Backspace: clear filter"),
         );
 

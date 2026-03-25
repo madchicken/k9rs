@@ -1,6 +1,7 @@
 use gpui::*;
 
 use crate::model::port_forward::PodPort;
+use crate::ui::theme::PanelColors;
 
 /// Modal dialog for starting a port forward
 pub struct PortForwardDialog {
@@ -10,6 +11,7 @@ pub struct PortForwardDialog {
     local_port: String,
     loading: bool,
     spinner: String,
+    colors: PanelColors,
 }
 
 impl PortForwardDialog {
@@ -20,6 +22,7 @@ impl PortForwardDialog {
         local_port: &str,
         loading: bool,
         spinner: &str,
+        colors: PanelColors,
     ) -> Self {
         Self {
             pod_name: pod_name.to_string(),
@@ -28,16 +31,18 @@ impl PortForwardDialog {
             local_port: local_port.to_string(),
             loading: loading,
             spinner: spinner.to_string(),
+            colors,
         }
     }
 
     pub fn into_element(self) -> Div {
+        let overlay = self.colors.overlay;
         div()
             .absolute()
             .top(px(0.0))
             .left(px(0.0))
             .size_full()
-            .bg(rgba(0x00000088))
+            .bg(overlay)
             .flex()
             .justify_center()
             .pt_8()
@@ -46,12 +51,13 @@ impl PortForwardDialog {
     }
 
     fn render_panel(self) -> Div {
+        let colors = &self.colors;
         let mut panel = div()
             .w(px(450.0))
             .max_h(px(400.0))
-            .bg(rgb(0x313244))
+            .bg(colors.muted)
             .border_1()
-            .border_color(rgb(0x585b70))
+            .border_color(colors.selection)
             .rounded_lg()
             .flex()
             .flex_col()
@@ -62,18 +68,18 @@ impl PortForwardDialog {
                     .px_3()
                     .py_2()
                     .border_b_1()
-                    .border_color(rgb(0x45475a))
+                    .border_color(colors.border)
                     .flex()
                     .gap_2()
                     .items_center()
                     .child(
                         div()
-                            .text_color(rgb(0x89b4fa))
+                            .text_color(colors.primary)
                             .child("Port Forward"),
                     )
                     .child(
                         div()
-                            .text_color(rgb(0xf9e2af))
+                            .text_color(colors.warning)
                             .text_sm()
                             .child(SharedString::from(self.pod_name.clone())),
                     ),
@@ -90,12 +96,12 @@ impl PortForwardDialog {
                     .gap_2()
                     .child(
                         div()
-                            .text_color(rgb(0x89b4fa))
+                            .text_color(colors.primary)
                             .child(SharedString::from(self.spinner)),
                     )
                     .child(
                         div()
-                            .text_color(rgb(0x6c7086))
+                            .text_color(colors.muted_foreground)
                             .child("Detecting ports..."),
                     ),
             );
@@ -104,7 +110,7 @@ impl PortForwardDialog {
                 div()
                     .px_3()
                     .py_4()
-                    .text_color(rgb(0x6c7086))
+                    .text_color(colors.muted_foreground)
                     .child("No exposed ports found. Enter ports manually."),
             );
         } else {
@@ -113,7 +119,7 @@ impl PortForwardDialog {
                 div()
                     .px_3()
                     .py_1()
-                    .text_color(rgb(0x6c7086))
+                    .text_color(colors.muted_foreground)
                     .text_xs()
                     .child("Select remote port:"),
             );
@@ -122,14 +128,14 @@ impl PortForwardDialog {
             for (i, port) in self.ports.iter().enumerate() {
                 let is_selected = i == self.selected_port;
                 let bg = if is_selected {
-                    rgb(0x585b70)
+                    colors.selection
                 } else {
-                    rgb(0x313244)
+                    colors.muted
                 };
                 let text_color = if is_selected {
-                    rgb(0xcdd6f4)
+                    colors.foreground
                 } else {
-                    rgb(0xbac2de)
+                    colors.secondary_foreground
                 };
 
                 list = list.child(
@@ -153,13 +159,13 @@ impl PortForwardDialog {
                 .px_3()
                 .py_2()
                 .border_t_1()
-                .border_color(rgb(0x45475a))
+                .border_color(colors.border)
                 .flex()
                 .gap_2()
                 .items_center()
                 .child(
                     div()
-                        .text_color(rgb(0x6c7086))
+                        .text_color(colors.muted_foreground)
                         .text_sm()
                         .child("Local port:"),
                 )
@@ -167,12 +173,12 @@ impl PortForwardDialog {
                     div()
                         .px_2()
                         .py_px()
-                        .bg(rgb(0x1e1e2e))
+                        .bg(colors.background)
                         .border_1()
-                        .border_color(rgb(0x45475a))
+                        .border_color(colors.border)
                         .rounded_sm()
                         .min_w(px(80.0))
-                        .text_color(rgb(0xcdd6f4))
+                        .text_color(colors.foreground)
                         .child(if self.local_port.is_empty() {
                             SharedString::from("(same as remote)")
                         } else {
@@ -187,8 +193,8 @@ impl PortForwardDialog {
                 .px_3()
                 .py_1()
                 .border_t_1()
-                .border_color(rgb(0x45475a))
-                .text_color(rgb(0x6c7086))
+                .border_color(colors.border)
+                .text_color(colors.muted_foreground)
                 .text_xs()
                 .child("j/k: select port | type: local port | Enter: start | Esc: cancel"),
         );

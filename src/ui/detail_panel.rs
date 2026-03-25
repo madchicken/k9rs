@@ -4,6 +4,7 @@ use gpui_component::tab::{Tab, TabBar};
 use gpui_component::{IconName, Sizable};
 
 use crate::model::detail::{DetailTab, ResourceDetail};
+use crate::ui::theme::PanelColors;
 
 /// Detail panel showing resource information in tabs
 pub struct DetailPanel {
@@ -14,6 +15,7 @@ pub struct DetailPanel {
     spinner: String,
     can_restart: bool,
     yaml_editor: Option<Entity<InputState>>,
+    colors: PanelColors,
 }
 
 impl DetailPanel {
@@ -25,6 +27,7 @@ impl DetailPanel {
         spinner: &str,
         can_restart: bool,
         yaml_editor: Option<Entity<InputState>>,
+        colors: PanelColors,
     ) -> Self {
         Self {
             detail: detail.clone(),
@@ -34,6 +37,7 @@ impl DetailPanel {
             spinner: spinner.to_string(),
             can_restart,
             yaml_editor,
+            colors,
         }
     }
 
@@ -86,36 +90,37 @@ impl DetailPanel {
             .flex()
             .w_full()
             .items_center()
-            .bg(rgb(0x313244))
+            .bg(self.colors.muted)
             .child(Component::new(tab_bar_widget));
 
         // Right side: restart button + resource name
         let mut right = div().flex().items_center().gap_2().pr_2();
 
         if self.can_restart {
+            let bg_with_alpha = Hsla { a: 0.67, ..self.colors.background };
             right = right.child(
                 div()
                     .px_2()
                     .py_px()
-                    .bg(rgb(0xf38ba8))
-                    .text_color(rgb(0x1e1e2e))
+                    .bg(self.colors.danger)
+                    .text_color(self.colors.background)
                     .text_xs()
                     .rounded_sm()
                     .cursor_pointer()
-                    .hover(|s| s.bg(rgb(0xeba0ac)))
+                    .hover(|s| s.bg(self.colors.danger_hover))
                     .on_mouse_down(MouseButton::Left, move |ev, window, cx| {
                         on_restart(ev, window, cx);
                     })
                     .flex()
                     .gap_1()
                     .child("↻ Restart")
-                    .child(div().text_color(rgba(0x1e1e2eaa)).child("(r)")),
+                    .child(div().text_color(bg_with_alpha).child("(r)")),
             );
         }
 
         right = right.child(
             div()
-                .text_color(rgb(0xf9e2af))
+                .text_color(self.colors.warning)
                 .text_sm()
                 .child(SharedString::from(self.detail.name.clone())),
         );
@@ -156,17 +161,17 @@ impl DetailPanel {
         // Status header
         let phase_color = match self.detail.phase.to_lowercase().as_str() {
             s if s.contains("running") || s.contains("ready") || s.contains("active") => {
-                rgb(0xa6e3a1)
+                self.colors.success
             }
-            s if s.contains("pending") || s.contains("waiting") => rgb(0xf9e2af),
+            s if s.contains("pending") || s.contains("waiting") => self.colors.warning,
             s if s.contains("failed")
                 || s.contains("error")
                 || s.contains("terminated")
                 || s.contains("notready") =>
             {
-                rgb(0xf38ba8)
+                self.colors.danger
             }
-            _ => rgb(0xcdd6f4),
+            _ => self.colors.foreground,
         };
 
         content = content.child(
@@ -182,7 +187,7 @@ impl DetailPanel {
                 )
                 .child(
                     div()
-                        .text_color(rgb(0x6c7086))
+                        .text_color(self.colors.muted_foreground)
                         .child(SharedString::from(format!(
                             "{} · Age: {}",
                             self.detail.resource_type, self.detail.age
@@ -193,11 +198,11 @@ impl DetailPanel {
         // Metadata section
         content = content.child(self.render_section("Metadata", {
             let mut d = div().flex().flex_col().gap_1();
-            d = d.child(render_kv("Name", &self.detail.name));
+            d = d.child(render_kv("Name", &self.detail.name, &self.colors));
             if let Some(ns) = &self.detail.namespace {
-                d = d.child(render_kv("Namespace", ns));
+                d = d.child(render_kv("Namespace", ns, &self.colors));
             }
-            d = d.child(render_kv("Age", &self.detail.age));
+            d = d.child(render_kv("Age", &self.detail.age, &self.colors));
             if !self.detail.owner_references.is_empty() {
                 let owners = self
                     .detail
@@ -206,7 +211,7 @@ impl DetailPanel {
                     .map(|o| format!("{}/{}", o.kind, o.name))
                     .collect::<Vec<_>>()
                     .join(", ");
-                d = d.child(render_kv("Owner", &owners));
+                d = d.child(render_kv("Owner", &owners, &self.colors));
             }
             d
         }));
@@ -215,7 +220,7 @@ impl DetailPanel {
         if !self.detail.labels.is_empty() {
             let mut d = div().flex().flex_wrap().gap_1();
             for (k, v) in &self.detail.labels {
-                d = d.child(render_tag(k, v));
+                d = d.child(render_tag(k, v, &self.colors));
             }
             content = content.child(self.render_section("Labels", d));
         }
@@ -224,7 +229,7 @@ impl DetailPanel {
         if !self.detail.annotations.is_empty() {
             let mut d = div().flex().flex_col().gap_1();
             for (k, v) in &self.detail.annotations {
-                d = d.child(render_kv(k, v));
+                d = d.child(render_kv(k, v, &self.colors));
             }
             content = content.child(self.render_section("Annotations", d));
         }
@@ -236,7 +241,7 @@ impl DetailPanel {
                 div()
                     .flex()
                     .gap_2()
-                    .text_color(rgb(0x89b4fa))
+                    .text_color(self.colors.primary)
                     .text_xs()
                     .child(div().w(px(140.0)).child("TYPE"))
                     .child(div().w(px(60.0)).child("STATUS"))
@@ -245,9 +250,9 @@ impl DetailPanel {
             );
             for cond in &self.detail.conditions {
                 let status_color = if cond.status == "True" {
-                    rgb(0xa6e3a1)
+                    self.colors.success
                 } else {
-                    rgb(0xf38ba8)
+                    self.colors.danger
                 };
                 d = d.child(
                     div()
@@ -257,7 +262,7 @@ impl DetailPanel {
                         .child(
                             div()
                                 .w(px(140.0))
-                                .text_color(rgb(0xcdd6f4))
+                                .text_color(self.colors.foreground)
                                 .child(SharedString::from(cond.type_.clone())),
                         )
                         .child(
@@ -269,13 +274,13 @@ impl DetailPanel {
                         .child(
                             div()
                                 .w(px(100.0))
-                                .text_color(rgb(0x6c7086))
+                                .text_color(self.colors.muted_foreground)
                                 .child(SharedString::from(cond.last_transition.clone())),
                         )
                         .child(
                             div()
                                 .flex_1()
-                                .text_color(rgb(0xbac2de))
+                                .text_color(self.colors.secondary_foreground)
                                 .overflow_x_hidden()
                                 .child(SharedString::from(cond.message.clone())),
                         ),
@@ -289,13 +294,13 @@ impl DetailPanel {
             let mut d = div().flex().flex_col().gap_1();
             for c in &self.detail.containers {
                 let state_color = if c.state.contains("Running") {
-                    rgb(0xa6e3a1)
+                    self.colors.success
                 } else if c.state.contains("Waiting") {
-                    rgb(0xf9e2af)
+                    self.colors.warning
                 } else if c.state.contains("Terminated") {
-                    rgb(0xf38ba8)
+                    self.colors.danger
                 } else {
-                    rgb(0x6c7086)
+                    self.colors.muted_foreground
                 };
 
                 let mut container_div = div()
@@ -303,7 +308,7 @@ impl DetailPanel {
                     .flex_col()
                     .p_2()
                     .mb_1()
-                    .bg(rgb(0x24243a))
+                    .bg(self.colors.list_even)
                     .rounded_md()
                     .gap_1()
                     .child(
@@ -313,7 +318,7 @@ impl DetailPanel {
                             .gap_2()
                             .child(
                                 div()
-                                    .text_color(rgb(0x89b4fa))
+                                    .text_color(self.colors.primary)
                                     .child(SharedString::from(c.name.clone())),
                             )
                             .child(
@@ -325,11 +330,12 @@ impl DetailPanel {
                     )
                     .child({
                         let image_text = c.image.clone();
+                        let link_hover = self.colors.link_hover;
                         div()
                             .flex()
                             .gap_4()
                             .text_sm()
-                            .text_color(rgb(0x6c7086))
+                            .text_color(self.colors.muted_foreground)
                             .child(
                                 div()
                                     .flex()
@@ -338,14 +344,14 @@ impl DetailPanel {
                                     .child("Image:")
                                     .child(
                                         div()
-                                            .text_color(rgb(0xbac2de))
+                                            .text_color(self.colors.secondary_foreground)
                                             .child(SharedString::from(c.image.clone())),
                                     )
                                     .child(
                                         div()
                                             .cursor_pointer()
-                                            .text_color(rgb(0x6c7086))
-                                            .hover(|s| s.text_color(rgb(0x89b4fa)))
+                                            .text_color(self.colors.muted_foreground)
+                                            .hover(move |s| s.text_color(link_hover))
                                             .on_mouse_down(
                                                 MouseButton::Left,
                                                 move |_ev, _window, cx| {
@@ -366,9 +372,9 @@ impl DetailPanel {
                                 div().flex().gap_1().child("Ready:").child(
                                     div()
                                         .text_color(if c.ready {
-                                            rgb(0xa6e3a1)
+                                            self.colors.success
                                         } else {
-                                            rgb(0xf38ba8)
+                                            self.colors.danger
                                         })
                                         .child(if c.ready { "Yes" } else { "No" }),
                                 ),
@@ -376,7 +382,7 @@ impl DetailPanel {
                             .child(
                                 div().flex().gap_1().child("Restarts:").child(
                                     div()
-                                        .text_color(rgb(0xbac2de))
+                                        .text_color(self.colors.secondary_foreground)
                                         .child(SharedString::from(c.restart_count.to_string())),
                                 ),
                             )
@@ -388,11 +394,11 @@ impl DetailPanel {
                             .flex()
                             .gap_1()
                             .text_sm()
-                            .text_color(rgb(0x6c7086))
+                            .text_color(self.colors.muted_foreground)
                             .child("Ports:")
                             .child(
                                 div()
-                                    .text_color(rgb(0xbac2de))
+                                    .text_color(self.colors.secondary_foreground)
                                     .child(SharedString::from(c.ports.clone())),
                             ),
                     );
@@ -440,7 +446,7 @@ impl DetailPanel {
             .gap_1()
             .py_1()
             .text_xs()
-            .text_color(rgb(0x89b4fa));
+            .text_color(self.colors.primary);
         for (name, w) in col_widths {
             header = header.child(div().w(px(*w)).child(*name));
         }
@@ -449,40 +455,40 @@ impl DetailPanel {
         // Data rows
         for (i, pod) in self.detail.pods.iter().enumerate() {
             let bg = if i % 2 == 0 {
-                rgb(0x1e1e2e)
+                self.colors.background
             } else {
-                rgb(0x24243a)
+                self.colors.list_even
             };
 
-            let status_color: Rgba = match pod.status.to_lowercase().as_str() {
-                "running" => rgb(0xa6e3a1),
-                "pending" => rgb(0xf9e2af),
+            let status_color: Hsla = match pod.status.to_lowercase().as_str() {
+                "running" => self.colors.success,
+                "pending" => self.colors.warning,
                 s if s.contains("error") || s.contains("fail") || s.contains("crash") => {
-                    rgb(0xf38ba8)
+                    self.colors.danger
                 }
-                "succeeded" => rgb(0x89b4fa),
-                _ => rgb(0xcdd6f4),
+                "succeeded" => self.colors.primary,
+                _ => self.colors.foreground,
             };
 
-            let cells: Vec<(SharedString, Rgba)> = vec![
-                (pod.name.clone().into(), rgb(0xcdd6f4)),
-                (pod.ready.clone().into(), rgb(0xbac2de)),
+            let cells: Vec<(SharedString, Hsla)> = vec![
+                (pod.name.clone().into(), self.colors.foreground),
+                (pod.ready.clone().into(), self.colors.secondary_foreground),
                 (pod.status.clone().into(), status_color),
-                (pod.cpu.clone().into(), rgb(0xbac2de)),
-                (pod.memory.clone().into(), rgb(0xbac2de)),
+                (pod.cpu.clone().into(), self.colors.secondary_foreground),
+                (pod.memory.clone().into(), self.colors.secondary_foreground),
                 (
                     pod.restarts.to_string().into(),
                     if pod.restarts > 0 {
-                        rgb(0xf9e2af)
+                        self.colors.warning
                     } else {
-                        rgb(0xbac2de)
+                        self.colors.secondary_foreground
                     },
                 ),
-                (pod.last_restart_time.clone().into(), rgb(0x6c7086)),
-                (pod.last_restart_reason.clone().into(), rgb(0x6c7086)),
-                (pod.node.clone().into(), rgb(0x6c7086)),
-                (pod.ip.clone().into(), rgb(0x6c7086)),
-                (pod.age.clone().into(), rgb(0x6c7086)),
+                (pod.last_restart_time.clone().into(), self.colors.muted_foreground),
+                (pod.last_restart_reason.clone().into(), self.colors.muted_foreground),
+                (pod.node.clone().into(), self.colors.muted_foreground),
+                (pod.ip.clone().into(), self.colors.muted_foreground),
+                (pod.age.clone().into(), self.colors.muted_foreground),
             ];
 
             let mut row = div().flex().gap_1().py_px().bg(bg).text_sm();
@@ -491,12 +497,13 @@ impl DetailPanel {
                 let w = col_widths[j].1;
                 if j == 0 {
                     // NAME column — clickable link
+                    let link_hover = self.colors.link_hover;
                     let mut name_cell = div()
                         .w(px(w))
-                        .text_color(rgb(0x89b4fa))
+                        .text_color(self.colors.link)
                         .overflow_x_hidden()
                         .cursor_pointer()
-                        .hover(|s| s.text_color(rgb(0xb4d0fb)));
+                        .hover(move |s| s.text_color(link_hover));
 
                     if let Some(cb) = &on_pod_click {
                         let cb = cb.clone();
@@ -529,7 +536,7 @@ impl DetailPanel {
         if self.detail.yaml.is_empty() {
             return div()
                 .p_4()
-                .text_color(rgb(0x6c7086))
+                .text_color(self.colors.muted_foreground)
                 .child("No YAML available");
         }
 
@@ -543,12 +550,12 @@ impl DetailPanel {
                     div()
                         .px_3()
                         .py_1()
-                        .bg(rgb(0x313244))
+                        .bg(self.colors.muted)
                         .flex()
                         .items_center()
                         .gap_2()
                         .text_xs()
-                        .text_color(rgb(0x6c7086))
+                        .text_color(self.colors.muted_foreground)
                         .child("Edit YAML · Ctrl+S to apply"),
                 )
                 .child(
@@ -559,7 +566,7 @@ impl DetailPanel {
                         .text_base()
                         .child(Component::new(
                             Input::new(editor)
-                                .bg(rgb(0x313244))
+                                .bg(self.colors.muted)
                                 .h_full()
                                 .appearance(false),
                         )),
@@ -570,7 +577,7 @@ impl DetailPanel {
             for line in self.detail.yaml.lines() {
                 content = content.child(
                     div()
-                        .text_color(rgb(0xcdd6f4))
+                        .text_color(self.colors.foreground)
                         .text_sm()
                         .child(SharedString::from(line.to_string())),
                 );
@@ -581,7 +588,7 @@ impl DetailPanel {
 
     fn render_events(&self) -> Div {
         if self.detail.events.is_empty() {
-            return div().p_4().text_color(rgb(0x6c7086)).child("No events");
+            return div().p_4().text_color(self.colors.muted_foreground).child("No events");
         }
 
         let mut content = div().flex().flex_col().p_3();
@@ -591,7 +598,7 @@ impl DetailPanel {
                 .flex()
                 .gap_2()
                 .py_1()
-                .text_color(rgb(0x89b4fa))
+                .text_color(self.colors.primary)
                 .text_xs()
                 .child(div().w(px(70.0)).child("TYPE"))
                 .child(div().w(px(120.0)).child("REASON"))
@@ -602,15 +609,15 @@ impl DetailPanel {
 
         for (i, ev) in self.detail.events.iter().enumerate() {
             let type_color = if ev.type_ == "Warning" {
-                rgb(0xf9e2af)
+                self.colors.warning
             } else {
-                rgb(0xa6e3a1)
+                self.colors.success
             };
 
             let bg = if i % 2 == 0 {
-                rgb(0x1e1e2e)
+                self.colors.background
             } else {
-                rgb(0x24243a)
+                self.colors.list_even
             };
 
             content = content.child(
@@ -629,26 +636,26 @@ impl DetailPanel {
                     .child(
                         div()
                             .w(px(120.0))
-                            .text_color(rgb(0xcdd6f4))
+                            .text_color(self.colors.foreground)
                             .child(SharedString::from(ev.reason.clone())),
                     )
                     .child(
                         div()
                             .w(px(60.0))
-                            .text_color(rgb(0x6c7086))
+                            .text_color(self.colors.muted_foreground)
                             .child(SharedString::from(ev.age.clone())),
                     )
                     .child(
                         div()
                             .w(px(140.0))
-                            .text_color(rgb(0x6c7086))
+                            .text_color(self.colors.muted_foreground)
                             .overflow_x_hidden()
                             .child(SharedString::from(ev.from.clone())),
                     )
                     .child(
                         div()
                             .flex_1()
-                            .text_color(rgb(0xbac2de))
+                            .text_color(self.colors.secondary_foreground)
                             .overflow_x_hidden()
                             .child(SharedString::from(ev.message.clone())),
                     ),
@@ -666,7 +673,7 @@ impl DetailPanel {
         if !log_supported {
             return div()
                 .p_4()
-                .text_color(rgb(0x6c7086))
+                .text_color(self.colors.muted_foreground)
                 .child("Logs not available for this resource type");
         }
 
@@ -678,20 +685,20 @@ impl DetailPanel {
                 .gap_2()
                 .child(
                     div()
-                        .text_color(rgb(0x89b4fa))
+                        .text_color(self.colors.primary)
                         .child(SharedString::from(self.spinner.clone())),
                 )
-                .child(div().text_color(rgb(0x6c7086)).child("Loading logs..."));
+                .child(div().text_color(self.colors.muted_foreground).child("Loading logs..."));
         }
 
         match &self.logs {
             None => div()
                 .p_4()
-                .text_color(rgb(0x6c7086))
+                .text_color(self.colors.muted_foreground)
                 .child("Switch to Logs tab (4) to load logs"),
             Some(logs) if logs.is_empty() => div()
                 .p_4()
-                .text_color(rgb(0x6c7086))
+                .text_color(self.colors.muted_foreground)
                 .child("No logs available"),
             Some(logs) => {
                 let mut content = div().flex().flex_col().p_2().font_family("Monaco");
@@ -699,7 +706,7 @@ impl DetailPanel {
                     content = content.child(
                         div()
                             .text_sm()
-                            .text_color(rgb(0xcdd6f4))
+                            .text_color(self.colors.foreground)
                             .child(SharedString::from(line.to_string())),
                     );
                 }
@@ -715,18 +722,18 @@ impl DetailPanel {
             .gap_1()
             .child(
                 div()
-                    .text_color(rgb(0x89b4fa))
+                    .text_color(self.colors.primary)
                     .text_sm()
                     .pb_1()
                     .border_b_1()
-                    .border_color(rgb(0x45475a))
+                    .border_color(self.colors.border)
                     .child(SharedString::from(title.to_string())),
             )
             .child(inner)
     }
 }
 
-fn render_kv(key: &str, value: &str) -> Div {
+fn render_kv(key: &str, value: &str, colors: &PanelColors) -> Div {
     div()
         .flex()
         .gap_2()
@@ -734,34 +741,34 @@ fn render_kv(key: &str, value: &str) -> Div {
         .child(
             div()
                 .w(px(120.0))
-                .text_color(rgb(0x6c7086))
+                .text_color(colors.muted_foreground)
                 .child(SharedString::from(key.to_string())),
         )
         .child(
             div()
                 .flex_1()
-                .text_color(rgb(0xcdd6f4))
+                .text_color(colors.foreground)
                 .child(SharedString::from(value.to_string())),
         )
 }
 
-fn render_tag(key: &str, value: &str) -> Div {
+fn render_tag(key: &str, value: &str, colors: &PanelColors) -> Div {
     div()
         .flex()
         .text_sm()
         .px_2()
         .py_px()
         .mb_1()
-        .bg(rgb(0x313244))
+        .bg(colors.muted)
         .rounded_sm()
         .child(
             div()
-                .text_color(rgb(0x89b4fa))
+                .text_color(colors.primary)
                 .child(SharedString::from(format!("{key}="))),
         )
         .child(
             div()
-                .text_color(rgb(0xa6e3a1))
+                .text_color(colors.success)
                 .child(SharedString::from(value.to_string())),
         )
 }

@@ -1,4 +1,5 @@
 use gpui::*;
+use gpui_component::ActiveTheme;
 
 /// Header bar showing cluster context, namespace, and current resource
 pub struct Header {
@@ -16,19 +17,27 @@ impl Header {
         }
     }
 
-    pub fn into_element(self) -> Div {
+    pub fn into_element(self, cx: &App) -> Div {
+        let theme = cx.theme();
+        let muted_bg = theme.muted;
+        let primary = theme.primary;
+        let muted_fg = theme.muted_foreground;
+        let success = theme.success;
+        let warning = theme.warning;
+        let danger = theme.danger;
+
         div()
             .flex()
             .w_full()
             .px_4()
             .py_2()
-            .bg(rgb(0x313244))
+            .bg(muted_bg)
             .gap_4()
             .items_center()
             // Logo / app name
             .child(
                 div()
-                    .text_color(rgb(0x89b4fa))
+                    .text_color(primary)
                     .child("k9rs")
             )
             // Context
@@ -38,12 +47,12 @@ impl Header {
                     .gap_1()
                     .child(
                         div()
-                            .text_color(rgb(0x6c7086))
+                            .text_color(muted_fg)
                             .child("ctx:")
                     )
                     .child(
                         div()
-                            .text_color(rgb(0xa6e3a1))
+                            .text_color(success)
                             .child(self.context)
                     )
             )
@@ -54,12 +63,12 @@ impl Header {
                     .gap_1()
                     .child(
                         div()
-                            .text_color(rgb(0x6c7086))
+                            .text_color(muted_fg)
                             .child("ns:")
                     )
                     .child(
                         div()
-                            .text_color(rgb(0xf9e2af))
+                            .text_color(warning)
                             .child(self.namespace)
                     )
             )
@@ -70,12 +79,12 @@ impl Header {
                     .gap_1()
                     .child(
                         div()
-                            .text_color(rgb(0x6c7086))
+                            .text_color(muted_fg)
                             .child("res:")
                     )
                     .child(
                         div()
-                            .text_color(rgb(0xf38ba8))
+                            .text_color(danger)
                             .child(self.resource)
                     )
             )
