@@ -74,11 +74,7 @@ impl ResourcePicker {
                     .gap_2()
                     .border_b_1()
                     .border_color(colors.border)
-                    .child(
-                        div()
-                            .text_color(colors.primary)
-                            .child("Switch Resource"),
-                    ),
+                    .child(div().text_color(colors.primary).child("Switch Resource")),
             )
             // Live filter indicator — only shown when typing
             .when(!self.filter.is_empty(), |this| {
@@ -174,11 +170,7 @@ impl ResourcePicker {
                     });
 
                 if is_current {
-                    row = row.child(
-                        div()
-                            .text_color(colors.danger)
-                            .child("*"),
-                    );
+                    row = row.child(div().text_color(colors.danger).child("*"));
                 }
 
                 row = row.child(SharedString::from(display_name.clone()));

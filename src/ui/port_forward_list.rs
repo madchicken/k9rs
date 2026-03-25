@@ -65,20 +65,10 @@ impl PortForwardList {
                     .flex()
                     .gap_2()
                     .items_center()
-                    .child(
-                        div()
-                            .text_color(colors.primary)
-                            .child("Port Forwards"),
-                    )
-                    .child(
-                        div()
-                            .text_color(colors.muted_foreground)
-                            .text_sm()
-                            .child(SharedString::from(format!(
-                                "({} total)",
-                                self.entries.len()
-                            ))),
-                    ),
+                    .child(div().text_color(colors.primary).child("Port Forwards"))
+                    .child(div().text_color(colors.muted_foreground).text_sm().child(
+                        SharedString::from(format!("({} total)", self.entries.len())),
+                    )),
             );
 
         if self.entries.is_empty() {

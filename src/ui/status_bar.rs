@@ -40,40 +40,20 @@ impl StatusBar {
             div()
                 .flex()
                 .gap_1()
-                .child(
-                    div()
-                        .text_color(warning)
-                        .child(":"),
-                )
-                .child(
-                    div()
-                        .text_color(foreground)
-                        .child(self.command_input),
-                )
+                .child(div().text_color(warning).child(":"))
+                .child(div().text_color(foreground).child(self.command_input))
         } else if self.filter_mode {
             div()
                 .flex()
                 .gap_2()
                 .items_center()
-                .child(
-                    div()
-                        .text_color(primary)
-                        .child("⌕"),
-                )
-                .child(
-                    div()
-                        .text_color(foreground)
-                        .child(self.filter_text),
-                )
+                .child(div().text_color(primary).child("⌕"))
+                .child(div().text_color(foreground).child(self.filter_text))
         } else {
             let mut row = div()
                 .flex()
                 .gap_4()
-                .child(
-                    div()
-                        .text_color(success)
-                        .child(self.message),
-                );
+                .child(div().text_color(success).child(self.message));
 
             // Show active filter indicator when not in filter mode but filter is set
             if !self.filter_text.is_empty() {
@@ -87,11 +67,9 @@ impl StatusBar {
                 );
             }
 
-            row = row.child(
-                div()
-                    .text_color(muted_fg)
-                    .child("':' cmd | / filter | ↑↓ nav | Ctrl-N ns | Ctrl-K ctx | Ctrl-R res | Cmd-Q quit"),
-            );
+            row = row.child(div().text_color(muted_fg).child(
+                "':' cmd | / filter | ↑↓ nav | Ctrl-N ns | Ctrl-K ctx | Ctrl-R res | Cmd-Q quit",
+            ));
 
             row
         };

@@ -72,11 +72,7 @@ impl PortForwardDialog {
                     .flex()
                     .gap_2()
                     .items_center()
-                    .child(
-                        div()
-                            .text_color(colors.primary)
-                            .child("Port Forward"),
-                    )
+                    .child(div().text_color(colors.primary).child("Port Forward"))
                     .child(
                         div()
                             .text_color(colors.warning)

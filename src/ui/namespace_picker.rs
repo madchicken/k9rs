@@ -81,11 +81,7 @@ impl NamespacePicker {
                     .gap_2()
                     .border_b_1()
                     .border_color(colors.border)
-                    .child(
-                        div()
-                            .text_color(colors.primary)
-                            .child("Switch Namespace"),
-                    ),
+                    .child(div().text_color(colors.primary).child("Switch Namespace")),
             )
             // Live filter indicator — only shown when typing
             .when(!self.filter.is_empty(), |this| {
@@ -185,11 +181,7 @@ impl NamespacePicker {
                     });
 
                 if is_current {
-                    row = row.child(
-                        div()
-                            .text_color(colors.success)
-                            .child("*"),
-                    );
+                    row = row.child(div().text_color(colors.success).child("*"));
                 }
 
                 row = row.child(SharedString::from(ns.clone()));

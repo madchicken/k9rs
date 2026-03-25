@@ -86,9 +86,7 @@ impl DetailPanel {
                 DetailTab::Logs => IconName::SquareTerminal,
             };
             let label = format!("{} {}", tab.key_hint(), tab.label());
-            tab_bar_widget = tab_bar_widget.child(
-                Tab::new().label(label).prefix(icon),
-            );
+            tab_bar_widget = tab_bar_widget.child(Tab::new().label(label).prefix(icon));
         }
 
         // Wrap tab bar + restart button + resource name in a row
@@ -198,26 +196,25 @@ impl DetailPanel {
             _ => self.colors.foreground,
         };
 
-        content = content.child(
-            div()
-                .flex()
-                .gap_4()
-                .items_center()
-                .child(
-                    div()
-                        .text_color(phase_color)
-                        .text_lg()
-                        .child(SharedString::from(self.detail.phase.clone())),
-                )
-                .child(
-                    div()
-                        .text_color(self.colors.muted_foreground)
-                        .child(SharedString::from(format!(
+        content =
+            content.child(
+                div()
+                    .flex()
+                    .gap_4()
+                    .items_center()
+                    .child(
+                        div()
+                            .text_color(phase_color)
+                            .text_lg()
+                            .child(SharedString::from(self.detail.phase.clone())),
+                    )
+                    .child(div().text_color(self.colors.muted_foreground).child(
+                        SharedString::from(format!(
                             "{} · Age: {}",
                             self.detail.resource_type, self.detail.age
-                        ))),
-                ),
-        );
+                        )),
+                    )),
+            );
 
         // Metadata section
         content = content.child(self.render_section("Metadata", {
@@ -377,11 +374,9 @@ impl DetailPanel {
                                             .small()
                                             .icon(IconName::Copy)
                                             .on_click(move |_ev, _window, cx| {
-                                                cx.write_to_clipboard(
-                                                    ClipboardItem::new_string(
-                                                        image_text.clone(),
-                                                    ),
-                                                );
+                                                cx.write_to_clipboard(ClipboardItem::new_string(
+                                                    image_text.clone(),
+                                                ));
                                             }),
                                     )),
                             )
@@ -501,8 +496,14 @@ impl DetailPanel {
                         self.colors.secondary_foreground
                     },
                 ),
-                (pod.last_restart_time.clone().into(), self.colors.muted_foreground),
-                (pod.last_restart_reason.clone().into(), self.colors.muted_foreground),
+                (
+                    pod.last_restart_time.clone().into(),
+                    self.colors.muted_foreground,
+                ),
+                (
+                    pod.last_restart_reason.clone().into(),
+                    self.colors.muted_foreground,
+                ),
                 (pod.node.clone().into(), self.colors.muted_foreground),
                 (pod.ip.clone().into(), self.colors.muted_foreground),
                 (pod.age.clone().into(), self.colors.muted_foreground),
@@ -605,7 +606,10 @@ impl DetailPanel {
 
     fn render_events(&self) -> Div {
         if self.detail.events.is_empty() {
-            return div().p_4().text_color(self.colors.muted_foreground).child("No events");
+            return div()
+                .p_4()
+                .text_color(self.colors.muted_foreground)
+                .child("No events");
         }
 
         let mut content = div().flex().flex_col().p_3();
@@ -669,13 +673,11 @@ impl DetailPanel {
                             .overflow_x_hidden()
                             .child(SharedString::from(ev.from.clone())),
                     )
-                    .child(
-                        copyable_value(
-                            &format!("ev-msg-{i}"),
-                            &ev.message,
-                            self.colors.secondary_foreground,
-                        ),
-                    ),
+                    .child(copyable_value(
+                        &format!("ev-msg-{i}"),
+                        &ev.message,
+                        self.colors.secondary_foreground,
+                    )),
             );
         }
 
@@ -705,7 +707,11 @@ impl DetailPanel {
                         .text_color(self.colors.primary)
                         .child(SharedString::from(self.spinner.clone())),
                 )
-                .child(div().text_color(self.colors.muted_foreground).child("Loading logs..."));
+                .child(
+                    div()
+                        .text_color(self.colors.muted_foreground)
+                        .child("Loading logs..."),
+                );
         }
 
         match &self.logs {
@@ -721,12 +727,7 @@ impl DetailPanel {
                 let mut content = div().flex().flex_col().p_2().font_family("Monaco");
                 for (i, line) in logs.lines().enumerate() {
                     content = content.child(
-                        copyable_value(
-                            &format!("log-{i}"),
-                            line,
-                            self.colors.foreground,
-                        )
-                        .text_sm(),
+                        copyable_value(&format!("log-{i}"), line, self.colors.foreground).text_sm(),
                     );
                 }
                 content

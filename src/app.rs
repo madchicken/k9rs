@@ -252,10 +252,8 @@ impl AppView {
 
     fn load_available_namespaces(&mut self, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx: &mut AsyncApp| {
-            let result = spawn_on_tokio(async move {
-                K8sClient::list_namespace_names().await
-            })
-            .await;
+            let result =
+                spawn_on_tokio(async move { K8sClient::list_namespace_names().await }).await;
 
             cx.update(|cx| {
                 this.update(cx, |this, cx| {
@@ -1127,7 +1125,6 @@ impl AppView {
         if self.ns_picker_visible {
             self.ns_picker_visible = false;
             self.ns_picker_filter.clear();
-
         } else {
             self.ns_picker_visible = true;
             self.ns_picker_filter.clear();
@@ -1200,7 +1197,6 @@ impl AppView {
         if self.ctx_picker_visible {
             self.ctx_picker_visible = false;
             self.ctx_picker_filter.clear();
-
         } else {
             self.ctx_picker_visible = true;
             self.ctx_picker_filter.clear();
@@ -1229,8 +1225,7 @@ impl AppView {
             let filter = self.res_picker_filter.to_lowercase();
             all.into_iter()
                 .filter(|(display, api, _)| {
-                    display.to_lowercase().contains(&filter)
-                        || api.to_lowercase().contains(&filter)
+                    display.to_lowercase().contains(&filter) || api.to_lowercase().contains(&filter)
                 })
                 .collect()
         }
@@ -1319,7 +1314,6 @@ impl AppView {
         if self.res_picker_visible {
             self.res_picker_visible = false;
             self.res_picker_filter.clear();
-
         } else {
             self.res_picker_visible = true;
             self.res_picker_filter.clear();
@@ -1327,7 +1321,6 @@ impl AppView {
                 .iter()
                 .position(|r| r.api_name == self.current_resource)
                 .unwrap_or(0);
-
         }
     }
 
@@ -1421,22 +1414,28 @@ impl Render for AppView {
             &self.current_resource,
             &self.available_contexts,
             std::rc::Rc::new(move |ctx, _window, cx| {
-                weak_ctx.update(cx, |this, cx| {
-                    this.switch_context(&ctx, cx);
-                    cx.notify();
-                }).ok();
+                weak_ctx
+                    .update(cx, |this, cx| {
+                        this.switch_context(&ctx, cx);
+                        cx.notify();
+                    })
+                    .ok();
             }),
             std::rc::Rc::new(move |_ev, _window, cx| {
-                weak_ns.update(cx, |this, cx| {
-                    this.toggle_namespace_picker(cx);
-                    cx.notify();
-                }).ok();
+                weak_ns
+                    .update(cx, |this, cx| {
+                        this.toggle_namespace_picker(cx);
+                        cx.notify();
+                    })
+                    .ok();
             }),
             std::rc::Rc::new(move |res, _window, cx| {
-                weak_res.update(cx, |this, cx| {
-                    this.switch_resource(&res, cx);
-                    cx.notify();
-                }).ok();
+                weak_res
+                    .update(cx, |this, cx| {
+                        this.switch_resource(&res, cx);
+                        cx.notify();
+                    })
+                    .ok();
             }),
             cx,
         );
@@ -1513,7 +1512,8 @@ impl Render for AppView {
                     this.pf_list_visible = false;
                 } else if this.any_picker_visible() {
                     // If there's filter text, first Esc clears it; second Esc closes picker
-                    let has_filter = this.active_picker_filter_mut()
+                    let has_filter = this
+                        .active_picker_filter_mut()
                         .map(|f| !f.is_empty())
                         .unwrap_or(false);
                     if has_filter {
@@ -1564,9 +1564,8 @@ impl Render for AppView {
                             .unwrap_or_default(),
                         this.pf_dialog_local_port
                     );
-                    this.pending_confirm = Some(PendingConfirmation::StartPortForward {
-                        description: desc,
-                    });
+                    this.pending_confirm =
+                        Some(PendingConfirmation::StartPortForward { description: desc });
                 } else if this.res_picker_visible {
                     this.select_resource(cx);
                 } else if this.ctx_picker_visible {
@@ -1626,7 +1625,11 @@ impl Render for AppView {
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &ToggleSidebar, window, cx| {
-                if !this.detail_visible && !this.any_picker_visible() && !this.pf_dialog_visible && !this.pf_list_visible {
+                if !this.detail_visible
+                    && !this.any_picker_visible()
+                    && !this.pf_dialog_visible
+                    && !this.pf_list_visible
+                {
                     this.active_panel = match this.active_panel {
                         FocusPanel::Sidebar => {
                             // Focus the table so keyboard nav works
@@ -1712,8 +1715,10 @@ impl Render for AppView {
                                 resource_type.as_str(),
                                 "pods" | "deployments" | "statefulsets" | "daemonsets"
                             ) {
-                                this.pending_confirm =
-                                    Some(PendingConfirmation::Restart { name, resource_type });
+                                this.pending_confirm = Some(PendingConfirmation::Restart {
+                                    name,
+                                    resource_type,
+                                });
                             } else {
                                 this.status_message =
                                     format!("Restart not supported for {resource_type}");
@@ -1831,23 +1836,21 @@ impl Render for AppView {
                 let detail_visible = self.detail_visible;
 
                 let current_resource = self.current_resource.clone();
-                let mut body = div().flex().flex_1().overflow_hidden().child(
-                    build_sidebar(
-                        &current_resource,
-                        pf_count,
-                        move |idx, _ev, _window, cx| {
-                            weak_sidebar
-                                .update(cx, |this, cx| {
-                                    if let Some(entry) = RESOURCES.get(idx) {
-                                        this.switch_resource(entry.api_name, cx);
-                                        this.active_panel = FocusPanel::Table;
-                                    }
-                                    cx.notify();
-                                })
-                                .ok();
-                        },
-                    ),
-                );
+                let mut body = div().flex().flex_1().overflow_hidden().child(build_sidebar(
+                    &current_resource,
+                    pf_count,
+                    move |idx, _ev, _window, cx| {
+                        weak_sidebar
+                            .update(cx, |this, cx| {
+                                if let Some(entry) = RESOURCES.get(idx) {
+                                    this.switch_resource(entry.api_name, cx);
+                                    this.active_panel = FocusPanel::Table;
+                                }
+                                cx.notify();
+                            })
+                            .ok();
+                    },
+                ));
 
                 if detail_visible {
                     // Detail panel
@@ -1866,7 +1869,9 @@ impl Render for AppView {
                                             .child(spinner_text.clone()),
                                     )
                                     .child(
-                                        div().text_color(cx.theme().muted_foreground).child("Loading details..."),
+                                        div()
+                                            .text_color(cx.theme().muted_foreground)
+                                            .child("Loading details..."),
                                     ),
                             ),
                         );
@@ -1887,75 +1892,74 @@ impl Render for AppView {
                         let weak_apply = weak.clone();
                         let weak_pf = weak.clone();
                         let weak_pod = weak.clone();
-                        body = body.child(div().flex_1().child(
-                            panel.into_element_with_clicks(
-                                move |tab, _window, cx| {
-                                    weak_detail
-                                        .update(cx, |this, cx| {
-                                            this.switch_detail_tab(tab, cx);
-                                            cx.notify();
-                                        })
-                                        .ok();
-                                },
-                                move |_ev, _window, cx| {
-                                    weak_restart
-                                        .update(cx, |this, cx| {
-                                            // Same confirmation as keyboard `r`
-                                            if this.pending_confirm.is_none() {
-                                                let target = this.detail_data.as_ref().map(|d| {
-                                                    (d.name.clone(), d.resource_type.clone())
-                                                });
-                                                if let Some((name, resource_type)) = target {
-                                                    if matches!(
-                                                        resource_type.as_str(),
-                                                        "pods"
-                                                            | "deployments"
-                                                            | "statefulsets"
-                                                            | "daemonsets"
-                                                    ) {
-                                                        this.pending_confirm =
-                                                            Some(PendingConfirmation::Restart {
-                                                                name,
-                                                                resource_type,
-                                                            });
-                                                    }
+                        body = body.child(div().flex_1().child(panel.into_element_with_clicks(
+                            move |tab, _window, cx| {
+                                weak_detail
+                                    .update(cx, |this, cx| {
+                                        this.switch_detail_tab(tab, cx);
+                                        cx.notify();
+                                    })
+                                    .ok();
+                            },
+                            move |_ev, _window, cx| {
+                                weak_restart
+                                    .update(cx, |this, cx| {
+                                        // Same confirmation as keyboard `r`
+                                        if this.pending_confirm.is_none() {
+                                            let target = this
+                                                .detail_data
+                                                .as_ref()
+                                                .map(|d| (d.name.clone(), d.resource_type.clone()));
+                                            if let Some((name, resource_type)) = target {
+                                                if matches!(
+                                                    resource_type.as_str(),
+                                                    "pods"
+                                                        | "deployments"
+                                                        | "statefulsets"
+                                                        | "daemonsets"
+                                                ) {
+                                                    this.pending_confirm =
+                                                        Some(PendingConfirmation::Restart {
+                                                            name,
+                                                            resource_type,
+                                                        });
                                                 }
                                             }
-                                            cx.notify();
-                                        })
-                                        .ok();
-                                },
-                                // Apply YAML button
-                                move |_ev, _window, cx| {
-                                    weak_apply
-                                        .update(cx, |this, cx| {
-                                            if this.pending_confirm.is_none() {
-                                                this.pending_confirm =
-                                                    Some(PendingConfirmation::ApplyYaml);
-                                            }
-                                            cx.notify();
-                                        })
-                                        .ok();
-                                },
-                                // Port Forward button
-                                move |_ev, _window, cx| {
-                                    weak_pf
-                                        .update(cx, |this, cx| {
-                                            this.open_port_forward_dialog(cx);
-                                            cx.notify();
-                                        })
-                                        .ok();
-                                },
-                                move |pod_name, _ev, _window, cx| {
-                                    weak_pod
-                                        .update(cx, |this, cx| {
-                                            this.open_pod_detail_by_name(&pod_name, cx);
-                                            cx.notify();
-                                        })
-                                        .ok();
-                                },
-                            ),
-                        ));
+                                        }
+                                        cx.notify();
+                                    })
+                                    .ok();
+                            },
+                            // Apply YAML button
+                            move |_ev, _window, cx| {
+                                weak_apply
+                                    .update(cx, |this, cx| {
+                                        if this.pending_confirm.is_none() {
+                                            this.pending_confirm =
+                                                Some(PendingConfirmation::ApplyYaml);
+                                        }
+                                        cx.notify();
+                                    })
+                                    .ok();
+                            },
+                            // Port Forward button
+                            move |_ev, _window, cx| {
+                                weak_pf
+                                    .update(cx, |this, cx| {
+                                        this.open_port_forward_dialog(cx);
+                                        cx.notify();
+                                    })
+                                    .ok();
+                            },
+                            move |pod_name, _ev, _window, cx| {
+                                weak_pod
+                                    .update(cx, |this, cx| {
+                                        this.open_pod_detail_by_name(&pod_name, cx);
+                                        cx.notify();
+                                    })
+                                    .ok();
+                            },
+                        )));
                     }
                 } else if loading {
                     body = body.child(
@@ -2059,11 +2063,13 @@ impl Render for AppView {
             );
             let weak_ns_pick = cx.weak_entity();
             root = root.child(picker.into_element(move |idx, _ev, _window, cx| {
-                weak_ns_pick.update(cx, |this, cx| {
-                    this.ns_picker_selected = idx;
-                    this.select_namespace(cx);
-                    cx.notify();
-                }).ok();
+                weak_ns_pick
+                    .update(cx, |this, cx| {
+                        this.ns_picker_selected = idx;
+                        this.select_namespace(cx);
+                        cx.notify();
+                    })
+                    .ok();
             }));
         }
 
@@ -2084,7 +2090,11 @@ impl Render for AppView {
         // Port forward list overlay
         if self.pf_list_visible {
             let weak_pf_stop = cx.weak_entity();
-            let list = PortForwardList::new(&self.port_forwards, self.pf_list_selected, PanelColors::from_theme(cx));
+            let list = PortForwardList::new(
+                &self.port_forwards,
+                self.pf_list_selected,
+                PanelColors::from_theme(cx),
+            );
             root = root.child(list.into_element(move |id, _ev, _window, cx| {
                 weak_pf_stop
                     .update(cx, |this, cx| {
@@ -2093,10 +2103,7 @@ impl Render for AppView {
                             .iter()
                             .find(|e| e.id == id)
                             .map(|e| {
-                                format!(
-                                    "{}:{} -> {}",
-                                    e.pod_name, e.remote_port, e.local_port
-                                )
+                                format!("{}:{} -> {}", e.pod_name, e.remote_port, e.local_port)
                             })
                             .unwrap_or_default();
                         this.pending_confirm = Some(PendingConfirmation::StopPortForward {
