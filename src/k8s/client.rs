@@ -29,6 +29,16 @@ impl K8sClient {
             .ok_or_else(|| anyhow::anyhow!("No current context set"))
     }
 
+    /// List available contexts from kubeconfig
+    pub fn list_contexts() -> Result<Vec<String>> {
+        let kubeconfig = kube::config::Kubeconfig::read().context("Failed to read kubeconfig")?;
+        Ok(kubeconfig
+            .contexts
+            .iter()
+            .map(|c| c.name.clone())
+            .collect())
+    }
+
     /// Create a kube::Client from the default kubeconfig
     async fn client() -> Result<Client> {
         let config = Config::infer()

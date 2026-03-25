@@ -9,7 +9,7 @@ use crate::model::port_forward::{PodPort, PortForwardEntry, PortForwardStatus};
 use crate::model::resources::{resource_index, RESOURCES};
 use crate::model::table::TableData;
 use crate::ui::detail_panel::DetailPanel;
-use crate::ui::header::Header;
+use crate::ui::header::build_header;
 use crate::ui::namespace_picker::NamespacePicker;
 use crate::ui::port_forward_dialog::PortForwardDialog;
 use crate::ui::port_forward_list::PortForwardList;
@@ -53,6 +53,9 @@ pub struct AppView {
     current_resource: String,
     current_namespace: String,
     current_context: String,
+    /// Cached lists for header dropdowns
+    available_contexts: Vec<String>,
+    available_namespaces: Vec<String>,
     table_data: TableData,
     pub table_state: Entity<TableState<ResourceTableDelegate>>,
     selected_row: usize,
@@ -129,6 +132,8 @@ impl AppView {
             current_resource: resource.to_string(),
             current_namespace: namespace.to_string(),
             current_context: "unknown".to_string(),
+            available_contexts: K8sClient::list_contexts().unwrap_or_default(),
+            available_namespaces: vec![],
             table_data: TableData::empty(),
             table_state: table_state.clone(),
             selected_row: 0,
@@ -194,6 +199,7 @@ impl AppView {
         .detach();
 
         view.load_resource_data(cx);
+        view.load_available_namespaces(cx);
         view
     }
 
@@ -207,6 +213,77 @@ impl AppView {
                 self.status_message = format!("No cluster: {e}");
             }
         }
+    }
+
+    fn load_available_namespaces(&mut self, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx: &mut AsyncApp| {
+            let result = spawn_on_tokio(async move {
+                K8sClient::list_namespace_names().await
+            })
+            .await;
+
+            cx.update(|cx| {
+                this.update(cx, |this, cx| {
+                    if let Ok(mut names) = result {
+                        names.sort();
+                        this.available_namespaces = names;
+                        cx.notify();
+                    }
+                })
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn switch_context(&mut self, context_name: &str, cx: &mut Context<Self>) {
+        self.current_context = context_name.to_string();
+        self.current_namespace = "default".to_string();
+        self.available_namespaces.clear();
+        self.status_message = format!("Switching to context {}...", context_name);
+
+        let ctx = context_name.to_string();
+        cx.spawn(async move |this, cx: &mut AsyncApp| {
+            // Switch kubectl context
+            let context = ctx.clone();
+            let result = spawn_on_tokio(async move {
+                let output = tokio::process::Command::new("kubectl")
+                    .args(["config", "use-context", &context])
+                    .output()
+                    .await;
+                match output {
+                    Ok(o) if o.status.success() => Ok(()),
+                    Ok(o) => Err(anyhow::anyhow!(
+                        String::from_utf8_lossy(&o.stderr).to_string()
+                    )),
+                    Err(e) => Err(anyhow::anyhow!("{e}")),
+                }
+            })
+            .await;
+
+            cx.update(|cx| {
+                this.update(cx, |this, cx| {
+                    match result {
+                        Ok(()) => {
+                            this.status_message = format!("Context: {}", ctx);
+                            this.load_resource_data(cx);
+                            this.load_available_namespaces(cx);
+                        }
+                        Err(e) => {
+                            this.status_message = format!("Failed to switch context: {e}");
+                        }
+                    }
+                    cx.notify();
+                })
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn switch_namespace(&mut self, namespace: &str, cx: &mut Context<Self>) {
+        self.current_namespace = namespace.to_string();
+        self.load_resource_data(cx);
     }
 
     fn switch_resource(&mut self, api_name: &str, cx: &mut Context<Self>) {
@@ -1063,10 +1140,36 @@ impl Render for AppView {
             self.focus_handle.focus(window);
         }
 
-        let header = Header::new(
+        let weak = cx.weak_entity();
+
+        let weak_ctx = weak.clone();
+        let weak_ns = weak.clone();
+        let weak_res = weak.clone();
+
+        let header = build_header(
             &self.current_context,
             &self.current_namespace,
             &self.current_resource,
+            &self.available_contexts,
+            std::rc::Rc::new(move |ctx, _window, cx| {
+                weak_ctx.update(cx, |this, cx| {
+                    this.switch_context(&ctx, cx);
+                    cx.notify();
+                }).ok();
+            }),
+            std::rc::Rc::new(move |_ev, _window, cx| {
+                weak_ns.update(cx, |this, cx| {
+                    this.toggle_namespace_picker(cx);
+                    cx.notify();
+                }).ok();
+            }),
+            std::rc::Rc::new(move |res, _window, cx| {
+                weak_res.update(cx, |this, cx| {
+                    this.switch_resource(&res, cx);
+                    cx.notify();
+                }).ok();
+            }),
+            cx,
         );
 
         // (Table data is updated in load_resource_data and update_table_filter)
@@ -1077,8 +1180,6 @@ impl Render for AppView {
         let spinner_text =
             SharedString::from(SPINNER_FRAMES[self.spinner_frame % SPINNER_FRAMES.len()]);
         let loading_resource = self.current_resource.clone();
-
-        let weak = cx.weak_entity();
 
         let status_msg = if pf_count > 0 {
             format!("{} | PF: {} active", self.status_message, pf_count)
@@ -1308,7 +1409,7 @@ impl Render for AppView {
                 cx.notify();
             }))
             // Header
-            .child(header.into_element(cx))
+            .child(header)
             // Body: sidebar + content
             .child({
                 let weak_sidebar = weak.clone();
