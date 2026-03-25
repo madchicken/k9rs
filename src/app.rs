@@ -1365,7 +1365,7 @@ impl Render for AppView {
                         let weak_detail = weak.clone();
                         let weak_restart = weak.clone();
                         let weak_pod = weak.clone();
-                        body = body.child(div().flex_1().overflow_hidden().child(
+                        body = body.child(div().flex_1().child(
                             panel.into_element_with_clicks(
                                 move |tab, _window, cx| {
                                     weak_detail

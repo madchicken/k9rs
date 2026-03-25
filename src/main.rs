@@ -34,7 +34,7 @@ fn main() {
         .init();
 
     // Launch the GPUI application
-    let app = Application::new();
+    let app = Application::new().with_assets(gpui_component_assets::Assets);
     app.run(move |cx: &mut App| {
         // Initialize gpui-component (themes, input, etc.)
         gpui_component::init(cx);

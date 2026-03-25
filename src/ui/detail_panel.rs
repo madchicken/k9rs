@@ -1,6 +1,7 @@
 use gpui::*;
 use gpui_component::input::{Input, InputState};
 use gpui_component::tab::{Tab, TabBar};
+use gpui_component::{IconName, Sizable};
 
 use crate::model::detail::{DetailTab, ResourceDetail};
 
@@ -68,8 +69,16 @@ impl DetailPanel {
             });
 
         for tab in DetailTab::all() {
+            let icon = match tab {
+                DetailTab::Overview => IconName::LayoutDashboard,
+                DetailTab::Yaml => IconName::File,
+                DetailTab::Events => IconName::Bell,
+                DetailTab::Logs => IconName::SquareTerminal,
+            };
             let label = format!("{} {}", tab.key_hint(), tab.label());
-            tab_bar_widget = tab_bar_widget.child(Tab::new().label(label));
+            tab_bar_widget = tab_bar_widget.child(
+                Tab::new().label(label).prefix(icon),
+            );
         }
 
         // Wrap tab bar + restart button + resource name in a row
@@ -130,7 +139,7 @@ impl DetailPanel {
                 div()
                     .id("detail-content-scroll")
                     .flex_1()
-                    .overflow_y_scroll()
+                    .overflow_scroll()
                     .child(tab_content),
             );
         }
@@ -314,18 +323,44 @@ impl DetailPanel {
                                     .child(SharedString::from(c.state.clone())),
                             ),
                     )
-                    .child(
+                    .child({
+                        let image_text = c.image.clone();
                         div()
                             .flex()
                             .gap_4()
                             .text_sm()
                             .text_color(rgb(0x6c7086))
                             .child(
-                                div().flex().gap_1().child("Image:").child(
-                                    div()
-                                        .text_color(rgb(0xbac2de))
-                                        .child(SharedString::from(c.image.clone())),
-                                ),
+                                div()
+                                    .flex()
+                                    .gap_1()
+                                    .items_center()
+                                    .child("Image:")
+                                    .child(
+                                        div()
+                                            .text_color(rgb(0xbac2de))
+                                            .child(SharedString::from(c.image.clone())),
+                                    )
+                                    .child(
+                                        div()
+                                            .cursor_pointer()
+                                            .text_color(rgb(0x6c7086))
+                                            .hover(|s| s.text_color(rgb(0x89b4fa)))
+                                            .on_mouse_down(
+                                                MouseButton::Left,
+                                                move |_ev, _window, cx| {
+                                                    cx.write_to_clipboard(
+                                                        ClipboardItem::new_string(
+                                                            image_text.clone(),
+                                                        ),
+                                                    );
+                                                },
+                                            )
+                                            .child(Component::new(
+                                                gpui_component::Icon::new(IconName::Copy)
+                                                    .with_size(gpui_component::Size::XSmall),
+                                            )),
+                                    ),
                             )
                             .child(
                                 div().flex().gap_1().child("Ready:").child(
@@ -344,8 +379,8 @@ impl DetailPanel {
                                         .text_color(rgb(0xbac2de))
                                         .child(SharedString::from(c.restart_count.to_string())),
                                 ),
-                            ),
-                    );
+                            )
+                    });
 
                 if !c.ports.is_empty() {
                     container_div = container_div.child(
