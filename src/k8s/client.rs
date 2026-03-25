@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::sync::Mutex;
 
 use anyhow::{Context, Result};
 use k8s_openapi::api::apps::v1::{DaemonSet, Deployment, ReplicaSet, StatefulSet};
@@ -9,6 +10,7 @@ use k8s_openapi::api::core::v1::{
 };
 use k8s_openapi::api::networking::v1::Ingress;
 use kube::api::{Api, DeleteParams, ListParams, LogParams, Patch, PatchParams, ResourceExt};
+use kube::config::KubeConfigOptions;
 use kube::{Client, Config};
 
 use crate::model::detail::{
@@ -16,6 +18,9 @@ use crate::model::detail::{
 };
 use crate::model::port_forward::PodPort;
 use crate::model::table::{TableColumn, TableData, TableRow};
+
+/// Active context override — when set, `client()` uses this context instead of the default.
+static ACTIVE_CONTEXT: Mutex<Option<String>> = Mutex::new(None);
 
 /// Kubernetes client wrapper for k9rs
 pub struct K8sClient;
@@ -35,11 +40,26 @@ impl K8sClient {
         Ok(kubeconfig.contexts.iter().map(|c| c.name.clone()).collect())
     }
 
-    /// Create a kube::Client from the default kubeconfig
+    /// Set the active context used by all subsequent `client()` calls
+    pub fn set_active_context(context: &str) {
+        *ACTIVE_CONTEXT.lock().unwrap() = Some(context.to_string());
+    }
+
+    /// Create a kube::Client, using the active context override if set
     async fn client() -> Result<Client> {
-        let config = Config::infer()
+        let ctx = ACTIVE_CONTEXT.lock().unwrap().clone();
+        let config = if let Some(context) = ctx {
+            Config::from_kubeconfig(&KubeConfigOptions {
+                context: Some(context),
+                ..Default::default()
+            })
             .await
-            .context("Failed to infer kube config")?;
+            .context("Failed to load kubeconfig for context")?
+        } else {
+            Config::infer()
+                .await
+                .context("Failed to infer kube config")?
+        };
         Client::try_from(config).context("Failed to create Kubernetes client")
     }
 

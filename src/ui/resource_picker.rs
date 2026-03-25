@@ -3,34 +3,28 @@ use gpui::*;
 
 use crate::ui::theme::PanelColors;
 
-/// A modal overlay for selecting a namespace
-pub struct NamespacePicker {
-    namespaces: Vec<String>,
+/// A modal overlay for selecting a resource type
+pub struct ResourcePicker {
+    resources: Vec<(String, String, String)>, // (display_name, api_name, category)
     selected: usize,
     filter: String,
-    current_namespace: String,
-    loading: bool,
-    spinner: String,
+    current_resource: String,
     colors: PanelColors,
 }
 
-impl NamespacePicker {
+impl ResourcePicker {
     pub fn new(
-        namespaces: &[String],
+        resources: &[(String, String, String)],
         selected: usize,
         filter: &str,
-        current_namespace: &str,
-        loading: bool,
-        spinner: &str,
+        current_resource: &str,
         colors: PanelColors,
     ) -> Self {
         Self {
-            namespaces: namespaces.to_vec(),
+            resources: resources.to_vec(),
             selected,
             filter: filter.to_string(),
-            current_namespace: current_namespace.to_string(),
-            loading,
-            spinner: spinner.to_string(),
+            current_resource: current_resource.to_string(),
             colors,
         }
     }
@@ -49,9 +43,7 @@ impl NamespacePicker {
             .flex()
             .justify_center()
             .pt_8()
-            .on_mouse_down(MouseButton::Left, |_, _, _| {
-                // Absorb clicks on the backdrop
-            })
+            .on_mouse_down(MouseButton::Left, |_, _, _| {})
             .child(self.render_panel(on_item_click))
     }
 
@@ -61,6 +53,7 @@ impl NamespacePicker {
     ) -> Div {
         let on_item_click = std::rc::Rc::new(on_item_click);
         let colors = &self.colors;
+
         let mut panel = div()
             .w(px(400.0))
             .max_h(px(500.0))
@@ -84,7 +77,7 @@ impl NamespacePicker {
                     .child(
                         div()
                             .text_color(colors.primary)
-                            .child("Switch Namespace"),
+                            .child("Switch Resource"),
                     ),
             )
             // Live filter indicator — only shown when typing
@@ -113,46 +106,41 @@ impl NamespacePicker {
                 )
             });
 
-        // Namespace list (scrollable)
+        // Resource list (scrollable)
         let mut list = div()
-            .id("ns-picker-list")
+            .id("res-picker-list")
             .flex_1()
             .overflow_scroll()
             .flex()
             .flex_col();
 
-        if self.loading {
-            list = list.child(
-                div()
-                    .px_3()
-                    .py_4()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .gap_2()
-                    .child(
-                        div()
-                            .text_color(colors.primary)
-                            .child(SharedString::from(self.spinner)),
-                    )
-                    .child(
-                        div()
-                            .text_color(colors.muted_foreground)
-                            .child("Loading namespaces..."),
-                    ),
-            );
-        } else if self.namespaces.is_empty() {
+        if self.resources.is_empty() {
             list = list.child(
                 div()
                     .px_3()
                     .py_2()
                     .text_color(colors.muted_foreground)
-                    .child("No matching namespaces"),
+                    .child("No matching resources"),
             );
         } else {
-            for (i, ns) in self.namespaces.iter().enumerate() {
+            let mut last_category = String::new();
+            for (i, (display_name, api_name, category)) in self.resources.iter().enumerate() {
+                // Category header
+                if *category != last_category {
+                    list = list.child(
+                        div()
+                            .px_3()
+                            .pt_2()
+                            .pb_1()
+                            .text_color(colors.primary)
+                            .text_sm()
+                            .child(SharedString::from(category.clone())),
+                    );
+                    last_category = category.clone();
+                }
+
                 let is_selected = i == self.selected;
-                let is_current = *ns == self.current_namespace;
+                let is_current = *api_name == self.current_resource;
 
                 let bg = if is_selected {
                     colors.selection
@@ -161,7 +149,7 @@ impl NamespacePicker {
                 };
 
                 let text_color = if is_current {
-                    colors.success
+                    colors.danger // pink accent for current resource
                 } else if is_selected {
                     colors.foreground
                 } else {
@@ -171,24 +159,29 @@ impl NamespacePicker {
                 let hover_bg = colors.border;
                 let cb = on_item_click.clone();
                 let mut row = div()
-                    .id(SharedString::from(format!("ns-row-{i}")))
+                    .id(SharedString::from(format!("res-row-{i}")))
                     .px_3()
+                    .ml_2()
                     .py_1()
                     .bg(bg)
                     .text_color(text_color)
-                    .flex()
-                    .gap_2()
                     .cursor_pointer()
                     .hover(move |s| s.bg(hover_bg))
+                    .flex()
+                    .gap_2()
                     .on_mouse_down(MouseButton::Left, move |ev, window, cx| {
                         cb(i, ev, window, cx);
                     });
 
                 if is_current {
-                    row = row.child(div().text_color(colors.success).child("*"));
+                    row = row.child(
+                        div()
+                            .text_color(colors.danger)
+                            .child("*"),
+                    );
                 }
 
-                row = row.child(SharedString::from(ns.clone()));
+                row = row.child(SharedString::from(display_name.clone()));
 
                 list = list.child(row);
             }
