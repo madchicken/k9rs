@@ -738,23 +738,12 @@ fn render_kv(key: &str, value: &str, colors: &PanelColors) -> Div {
         )
 }
 
-fn render_tag(key: &str, value: &str, colors: &PanelColors) -> Div {
-    div()
-        .flex()
-        .text_sm()
-        .px_2()
-        .py_px()
-        .mb_1()
-        .bg(colors.muted)
-        .rounded_sm()
-        .child(
-            div()
-                .text_color(colors.primary)
-                .child(SharedString::from(format!("{key}="))),
-        )
-        .child(
-            div()
-                .text_color(colors.success)
-                .child(SharedString::from(value.to_string())),
-        )
+fn render_tag(key: &str, value: &str, _colors: &PanelColors) -> AnyElement {
+    Component::new(
+        gpui_component::tag::Tag::info()
+            .outline()
+            .with_size(gpui_component::Size::Small)
+            .child(SharedString::from(format!("{key}={value}"))),
+    )
+    .into_any_element()
 }
