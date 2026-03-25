@@ -1,3 +1,4 @@
+use gpui::prelude::FluentBuilder;
 use gpui::*;
 
 /// A modal overlay for selecting a Kubernetes context
@@ -78,30 +79,31 @@ impl ContextPicker {
                             .child("Switch Context"),
                     ),
             )
-            // Filter input display
-            .child(
-                div()
-                    .px_3()
-                    .py_2()
-                    .border_b_1()
-                    .border_color(rgb(0x45475a))
-                    .flex()
-                    .gap_1()
-                    .child(
-                        div()
-                            .text_color(rgb(0x6c7086))
-                            .child("Filter:"),
-                    )
-                    .child(
-                        div()
-                            .text_color(rgb(0xcdd6f4))
-                            .child(if self.filter.is_empty() {
-                                SharedString::from("(type to filter)")
-                            } else {
-                                SharedString::from(self.filter.clone())
-                            }),
-                    ),
-            );
+            // Live filter indicator
+            .when(!self.filter.is_empty(), |this| {
+                this.child(
+                    div()
+                        .px_3()
+                        .py_1()
+                        .border_b_1()
+                        .border_color(rgb(0x45475a))
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            div()
+                                .text_color(rgb(0x6c7086))
+                                .text_sm()
+                                .child("⌕"),
+                        )
+                        .child(
+                            div()
+                                .text_color(rgb(0xcdd6f4))
+                                .text_sm()
+                                .child(SharedString::from(self.filter.clone())),
+                        ),
+                )
+            });
 
         // Context list (scrollable)
         let mut list = div()
@@ -195,7 +197,7 @@ impl ContextPicker {
                 .border_t_1()
                 .border_color(rgb(0x45475a))
                 .text_color(rgb(0x6c7086))
-                .child("j/k: navigate | Enter/Click: select | Esc: cancel | Backspace: clear filter"),
+                .child("↑↓: navigate | Type to filter | Esc: close"),
         );
 
         panel

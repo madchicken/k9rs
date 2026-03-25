@@ -53,11 +53,12 @@ impl StatusBar {
         } else if self.filter_mode {
             div()
                 .flex()
-                .gap_1()
+                .gap_2()
+                .items_center()
                 .child(
                     div()
                         .text_color(primary)
-                        .child("/"),
+                        .child("⌕"),
                 )
                 .child(
                     div()
@@ -80,7 +81,8 @@ impl StatusBar {
                     div()
                         .flex()
                         .gap_1()
-                        .child(div().text_color(primary).child("/"))
+                        .items_center()
+                        .child(div().text_color(primary).child("⌕"))
                         .child(div().text_color(foreground).child(self.filter_text)),
                 );
             }

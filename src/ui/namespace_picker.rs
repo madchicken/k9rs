@@ -1,3 +1,4 @@
+use gpui::prelude::FluentBuilder;
 use gpui::*;
 
 use crate::ui::theme::PanelColors;
@@ -94,11 +95,12 @@ impl NamespacePicker {
                     .border_b_1()
                     .border_color(colors.border)
                     .flex()
-                    .gap_1()
+                    .items_center()
+                    .gap_2()
                     .child(
                         div()
                             .text_color(colors.muted_foreground)
-                            .child("Filter:"),
+                            .child("⌕"),
                     )
                     .child(
                         div()
@@ -206,7 +208,7 @@ impl NamespacePicker {
                 .border_t_1()
                 .border_color(colors.border)
                 .text_color(colors.muted_foreground)
-                .child("j/k: navigate | Enter/Click: select | Esc: cancel | Backspace: clear filter"),
+                .child("↑↓: navigate | Type to filter | Enter/Click: select | Esc: close | Backspace: clear filter"),
         );
 
         panel
