@@ -1,71 +1,63 @@
 use gpui::*;
 
-use crate::ui::theme::PanelColors;
-
-/// A modal overlay for selecting a namespace
-pub struct NamespacePicker {
-    namespaces: Vec<String>,
+/// A modal overlay for selecting a Kubernetes context
+pub struct ContextPicker {
+    contexts: Vec<String>,
     selected: usize,
     filter: String,
-    current_namespace: String,
+    current_context: String,
     loading: bool,
     spinner: String,
-    colors: PanelColors,
 }
 
-impl NamespacePicker {
+impl ContextPicker {
     pub fn new(
-        namespaces: &[String],
+        contexts: &[String],
         selected: usize,
         filter: &str,
-        current_namespace: &str,
+        current_context: &str,
         loading: bool,
         spinner: &str,
-        colors: PanelColors,
     ) -> Self {
         Self {
-            namespaces: namespaces.to_vec(),
+            contexts: contexts.to_vec(),
             selected,
             filter: filter.to_string(),
-            current_namespace: current_namespace.to_string(),
+            current_context: current_context.to_string(),
             loading,
             spinner: spinner.to_string(),
-            colors,
         }
     }
 
     pub fn into_element(
         self,
-        on_item_click: impl Fn(usize, &MouseDownEvent, &mut Window, &mut App) + 'static,
+        on_select: impl Fn(usize, &ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Div {
-        let overlay = self.colors.overlay;
         div()
             .absolute()
             .top(px(0.0))
             .left(px(0.0))
             .size_full()
-            .bg(overlay)
+            .bg(rgba(0x00000088))
             .flex()
             .justify_center()
             .pt_8()
-            .on_mouse_down(MouseButton::Left, |_, _, _| {
-                // Absorb clicks on the backdrop
-            })
-            .child(self.render_panel(on_item_click))
+            .on_mouse_down(MouseButton::Left, |_, _, _| {})
+            .child(self.render_panel(on_select))
     }
 
     fn render_panel(
         self,
-        on_item_click: impl Fn(usize, &MouseDownEvent, &mut Window, &mut App) + 'static,
+        on_select: impl Fn(usize, &ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Div {
-        let on_item_click = std::rc::Rc::new(on_item_click);
-        let colors = &self.colors;
+        let on_select = std::rc::Rc::new(on_select);
+
         let mut panel = div()
-            .w(px(400.0))
+            .w(px(500.0))
             .max_h(px(500.0))
-            .bg(colors.muted)
+            .bg(rgb(0x313244))
             .border_1()
-            .border_color(colors.selection)
+            .border_color(rgb(0x585b70))
             .rounded_lg()
             .flex()
             .flex_col()
@@ -79,11 +71,11 @@ impl NamespacePicker {
                     .items_center()
                     .gap_2()
                     .border_b_1()
-                    .border_color(colors.border)
+                    .border_color(rgb(0x45475a))
                     .child(
                         div()
-                            .text_color(colors.primary)
-                            .child("Switch Namespace"),
+                            .text_color(rgb(0x89b4fa))
+                            .child("Switch Context"),
                     ),
             )
             // Filter input display
@@ -92,17 +84,17 @@ impl NamespacePicker {
                     .px_3()
                     .py_2()
                     .border_b_1()
-                    .border_color(colors.border)
+                    .border_color(rgb(0x45475a))
                     .flex()
                     .gap_1()
                     .child(
                         div()
-                            .text_color(colors.muted_foreground)
+                            .text_color(rgb(0x6c7086))
                             .child("Filter:"),
                     )
                     .child(
                         div()
-                            .text_color(colors.foreground)
+                            .text_color(rgb(0xcdd6f4))
                             .child(if self.filter.is_empty() {
                                 SharedString::from("(type to filter)")
                             } else {
@@ -111,9 +103,9 @@ impl NamespacePicker {
                     ),
             );
 
-        // Namespace list (scrollable)
+        // Context list (scrollable)
         let mut list = div()
-            .id("ns-picker-list")
+            .id("ctx-picker-list")
             .flex_1()
             .overflow_scroll()
             .flex()
@@ -130,67 +122,64 @@ impl NamespacePicker {
                     .gap_2()
                     .child(
                         div()
-                            .text_color(colors.primary)
+                            .text_color(rgb(0x89b4fa))
                             .child(SharedString::from(self.spinner)),
                     )
                     .child(
                         div()
-                            .text_color(colors.muted_foreground)
-                            .child("Loading namespaces..."),
+                            .text_color(rgb(0x6c7086))
+                            .child("Loading contexts..."),
                     ),
             );
-        } else if self.namespaces.is_empty() {
+        } else if self.contexts.is_empty() {
             list = list.child(
                 div()
                     .px_3()
                     .py_2()
-                    .text_color(colors.muted_foreground)
-                    .child("No matching namespaces"),
+                    .text_color(rgb(0x6c7086))
+                    .child("No matching contexts"),
             );
         } else {
-            for (i, ns) in self.namespaces.iter().enumerate() {
+            for (i, ctx) in self.contexts.iter().enumerate() {
                 let is_selected = i == self.selected;
-                let is_current = *ns == self.current_namespace;
+                let is_current = *ctx == self.current_context;
 
                 let bg = if is_selected {
-                    colors.selection
+                    rgb(0x585b70)
                 } else {
-                    colors.muted
+                    rgb(0x313244)
                 };
 
                 let text_color = if is_current {
-                    colors.success
+                    rgb(0xa6e3a1)
                 } else if is_selected {
-                    colors.foreground
+                    rgb(0xcdd6f4)
                 } else {
-                    colors.secondary_foreground
+                    rgb(0xbac2de)
                 };
 
-                let hover_bg = colors.border;
-                let cb = on_item_click.clone();
+                let cb = on_select.clone();
                 let mut row = div()
-                    .id(SharedString::from(format!("ns-row-{i}")))
+                    .id(SharedString::from(format!("ctx-row-{i}")))
                     .px_3()
                     .py_1()
                     .bg(bg)
                     .text_color(text_color)
+                    .cursor_pointer()
+                    .hover(|s| s.bg(rgb(0x45475a)))
                     .flex()
                     .gap_2()
-                    .cursor_pointer()
-                    .hover(move |s| s.bg(hover_bg))
-                    .on_mouse_down(MouseButton::Left, move |ev, window, cx| {
-                        cb(i, ev, window, cx);
-                    });
+                    .on_click(move |ev, window, cx| cb(i, ev, window, cx));
 
                 if is_current {
                     row = row.child(
                         div()
-                            .text_color(colors.success)
+                            .text_color(rgb(0xa6e3a1))
                             .child("*"),
                     );
                 }
 
-                row = row.child(SharedString::from(ns.clone()));
+                row = row.child(SharedString::from(ctx.clone()));
 
                 list = list.child(row);
             }
@@ -204,8 +193,8 @@ impl NamespacePicker {
                 .px_3()
                 .py_1()
                 .border_t_1()
-                .border_color(colors.border)
-                .text_color(colors.muted_foreground)
+                .border_color(rgb(0x45475a))
+                .text_color(rgb(0x6c7086))
                 .child("j/k: navigate | Enter/Click: select | Esc: cancel | Backspace: clear filter"),
         );
 

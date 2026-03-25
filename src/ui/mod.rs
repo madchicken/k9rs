@@ -1,6 +1,8 @@
+pub mod context_picker;
 pub mod detail_panel;
 pub mod header;
 pub mod namespace_picker;
+pub mod resource_picker;
 pub mod port_forward_dialog;
 pub mod port_forward_list;
 pub mod resource_table;

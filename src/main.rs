@@ -168,6 +168,8 @@ fn main() {
             KeyBinding::new("d", app::StopPortForward, Some("app")),
             KeyBinding::new("ctrl-s", app::ApplyYaml, Some("app")),
             KeyBinding::new("ctrl-n", app::ToggleNamespacePicker, Some("app")),
+            KeyBinding::new("ctrl-k", app::ToggleContextPicker, Some("app")),
+            KeyBinding::new("ctrl-r", app::ToggleResourcePicker, Some("app")),
         ]);
 
         // Open the main window

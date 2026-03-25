@@ -8,11 +8,13 @@ use crate::model::detail::{DetailTab, ResourceDetail};
 use crate::model::port_forward::{PodPort, PortForwardEntry, PortForwardStatus};
 use crate::model::resources::{resource_index, RESOURCES};
 use crate::model::table::TableData;
+use crate::ui::context_picker::ContextPicker;
 use crate::ui::detail_panel::DetailPanel;
 use crate::ui::header::build_header;
 use crate::ui::namespace_picker::NamespacePicker;
 use crate::ui::port_forward_dialog::PortForwardDialog;
 use crate::ui::port_forward_list::PortForwardList;
+use crate::ui::resource_picker::ResourcePicker;
 use crate::ui::resource_table::ResourceTableDelegate;
 use crate::ui::sidebar::build_sidebar;
 use crate::ui::status_bar::StatusBar;
@@ -27,7 +29,9 @@ actions!(
         GoBack,
         ActivateCommand,
         ActivateFilter,
+        ToggleContextPicker,
         ToggleNamespacePicker,
+        ToggleResourcePicker,
         ToggleSidebar,
         Backspace,
         DetailTab1,
@@ -99,6 +103,16 @@ pub struct AppView {
     ns_picker_list: Vec<String>,
     ns_picker_selected: usize,
     ns_picker_filter: String,
+    // Context picker
+    ctx_picker_visible: bool,
+    ctx_picker_loading: bool,
+    ctx_picker_list: Vec<String>,
+    ctx_picker_selected: usize,
+    ctx_picker_filter: String,
+    // Resource picker
+    res_picker_visible: bool,
+    res_picker_selected: usize,
+    res_picker_filter: String,
 }
 
 impl Focusable for AppView {
@@ -170,10 +184,19 @@ impl AppView {
             ns_picker_list: vec![],
             ns_picker_selected: 0,
             ns_picker_filter: String::new(),
+            ctx_picker_visible: false,
+            ctx_picker_loading: false,
+            ctx_picker_list: vec![],
+            ctx_picker_selected: 0,
+            ctx_picker_filter: String::new(),
+            res_picker_visible: false,
+            res_picker_selected: 0,
+            res_picker_filter: String::new(),
         };
 
         if let Some(ctx) = context {
             view.current_context = ctx.to_string();
+            K8sClient::set_active_context(ctx);
             view.status_message = "Connected".to_string();
         } else {
             view.detect_context();
@@ -1016,7 +1039,23 @@ impl AppView {
             self.pf_list_selected = new_idx.clamp(0, count as i32 - 1) as usize;
             return;
         }
-        if self.ns_picker_visible {
+        if self.res_picker_visible {
+            let filtered = self.filtered_resources();
+            let count = filtered.len();
+            if count == 0 {
+                return;
+            }
+            let new_idx = self.res_picker_selected as i32 + delta;
+            self.res_picker_selected = new_idx.clamp(0, count as i32 - 1) as usize;
+        } else if self.ctx_picker_visible {
+            let filtered = self.filtered_contexts();
+            let count = filtered.len();
+            if count == 0 {
+                return;
+            }
+            let new_idx = self.ctx_picker_selected as i32 + delta;
+            self.ctx_picker_selected = new_idx.clamp(0, count as i32 - 1) as usize;
+        } else if self.ns_picker_visible {
             let filtered = self.filtered_namespaces();
             let count = filtered.len();
             if count == 0 {
@@ -1070,6 +1109,126 @@ impl AppView {
             self.ns_picker_filter.clear();
             self.ns_picker_selected = 0;
             self.load_namespaces(cx);
+        }
+    }
+
+    // ── Context picker methods ──
+
+    fn load_contexts(&mut self, cx: &mut Context<Self>) {
+        self.ctx_picker_loading = true;
+        cx.spawn(async move |this, cx: &mut AsyncApp| {
+            // Reading kubeconfig is synchronous but we do it off the main thread
+            let result = K8sClient::list_contexts();
+            cx.update(|cx| {
+                this.update(cx, |this, cx| {
+                    this.ctx_picker_loading = false;
+                    match result {
+                        Ok(mut names) => {
+                            names.sort();
+                            this.ctx_picker_selected = names
+                                .iter()
+                                .position(|n| n == &this.current_context)
+                                .unwrap_or(0);
+                            this.ctx_picker_list = names;
+                        }
+                        Err(e) => {
+                            this.status_message = format!("Error listing contexts: {e}");
+                            this.ctx_picker_visible = false;
+                        }
+                    }
+                    cx.notify();
+                })
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn filtered_contexts(&self) -> Vec<String> {
+        if self.ctx_picker_filter.is_empty() {
+            self.ctx_picker_list.clone()
+        } else {
+            let filter = self.ctx_picker_filter.to_lowercase();
+            self.ctx_picker_list
+                .iter()
+                .filter(|c| c.to_lowercase().contains(&filter))
+                .cloned()
+                .collect()
+        }
+    }
+
+    fn select_context(&mut self, cx: &mut Context<Self>) {
+        let filtered = self.filtered_contexts();
+        if let Some(ctx) = filtered.get(self.ctx_picker_selected) {
+            self.current_context = ctx.clone();
+            K8sClient::set_active_context(ctx);
+            self.ctx_picker_visible = false;
+            self.ctx_picker_filter.clear();
+            // Reset namespace to default and reload
+            self.current_namespace = "default".to_string();
+            self.load_resource_data(cx);
+        }
+    }
+
+    fn toggle_context_picker(&mut self, cx: &mut Context<Self>) {
+        if self.ctx_picker_visible {
+            self.ctx_picker_visible = false;
+            self.ctx_picker_filter.clear();
+        } else {
+            self.ctx_picker_visible = true;
+            self.ctx_picker_filter.clear();
+            self.ctx_picker_selected = 0;
+            self.load_contexts(cx);
+        }
+    }
+
+    // ── Resource picker methods ──
+
+    fn filtered_resources(&self) -> Vec<(String, String, String)> {
+        let all: Vec<(String, String, String)> = RESOURCES
+            .iter()
+            .map(|r| {
+                (
+                    r.display_name.to_string(),
+                    r.api_name.to_string(),
+                    r.category.to_string(),
+                )
+            })
+            .collect();
+        if self.res_picker_filter.is_empty() {
+            all
+        } else {
+            let filter = self.res_picker_filter.to_lowercase();
+            all.into_iter()
+                .filter(|(display, api, _)| {
+                    display.to_lowercase().contains(&filter)
+                        || api.to_lowercase().contains(&filter)
+                })
+                .collect()
+        }
+    }
+
+    fn select_resource(&mut self, cx: &mut Context<Self>) {
+        let filtered = self.filtered_resources();
+        if let Some((_, api_name, _)) = filtered.get(self.res_picker_selected) {
+            let api_name = api_name.clone();
+            self.res_picker_visible = false;
+            self.res_picker_filter.clear();
+            self.switch_resource(&api_name, cx);
+        }
+    }
+
+    fn toggle_resource_picker(&mut self) {
+        if self.res_picker_visible {
+            self.res_picker_visible = false;
+            self.res_picker_filter.clear();
+        } else {
+            self.res_picker_visible = true;
+            self.res_picker_filter.clear();
+            self.res_picker_selected = RESOURCES
+                .iter()
+                .position(|r| r.api_name == self.current_resource)
+                .unwrap_or(0);
         }
     }
 
@@ -1230,6 +1389,12 @@ impl Render for AppView {
                     this.pf_dialog_visible = false;
                 } else if this.pf_list_visible {
                     this.pf_list_visible = false;
+                } else if this.res_picker_visible {
+                    this.res_picker_visible = false;
+                    this.res_picker_filter.clear();
+                } else if this.ctx_picker_visible {
+                    this.ctx_picker_visible = false;
+                    this.ctx_picker_filter.clear();
                 } else if this.ns_picker_visible {
                     this.ns_picker_visible = false;
                     this.ns_picker_filter.clear();
@@ -1258,6 +1423,10 @@ impl Render for AppView {
             .on_action(cx.listener(|this, _: &Enter, window, cx| {
                 if this.pf_dialog_visible {
                     this.start_port_forward(cx);
+                } else if this.res_picker_visible {
+                    this.select_resource(cx);
+                } else if this.ctx_picker_visible {
+                    this.select_context(cx);
                 } else if this.ns_picker_visible {
                     this.select_namespace(cx);
                 } else if this.filter_mode {
@@ -1292,6 +1461,14 @@ impl Render for AppView {
                 this.toggle_namespace_picker(cx);
                 cx.notify();
             }))
+            .on_action(cx.listener(|this, _: &ToggleContextPicker, _window, cx| {
+                this.toggle_context_picker(cx);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &ToggleResourcePicker, _window, cx| {
+                this.toggle_resource_picker();
+                cx.notify();
+            }))
             .on_action(cx.listener(|this, _: &ToggleSidebar, window, cx| {
                 if !this.detail_visible {
                     this.active_panel = match this.active_panel {
@@ -1313,6 +1490,12 @@ impl Render for AppView {
             .on_action(cx.listener(|this, _: &Backspace, _window, cx| {
                 if this.pf_dialog_visible {
                     this.pf_dialog_local_port.pop();
+                } else if this.res_picker_visible {
+                    this.res_picker_filter.pop();
+                    this.res_picker_selected = 0;
+                } else if this.ctx_picker_visible {
+                    this.ctx_picker_filter.pop();
+                    this.ctx_picker_selected = 0;
                 } else if this.ns_picker_visible {
                     this.ns_picker_filter.pop();
                     this.ns_picker_selected = 0;
@@ -1389,6 +1572,16 @@ impl Render for AppView {
                         if key_char.chars().all(|c| c.is_ascii_digit()) {
                             this.pf_dialog_local_port.push_str(key_char);
                         }
+                    }
+                } else if this.res_picker_visible {
+                    if let Some(key_char) = &event.keystroke.key_char {
+                        this.res_picker_filter.push_str(key_char);
+                        this.res_picker_selected = 0;
+                    }
+                } else if this.ctx_picker_visible {
+                    if let Some(key_char) = &event.keystroke.key_char {
+                        this.ctx_picker_filter.push_str(key_char);
+                        this.ctx_picker_selected = 0;
                     }
                 } else if this.ns_picker_visible {
                     if let Some(key_char) = &event.keystroke.key_char {
@@ -1543,6 +1736,48 @@ impl Render for AppView {
         // Check port-forward health
         self.check_port_forward_health();
 
+        // Resource picker overlay
+        if self.res_picker_visible {
+            let weak_res_pick = cx.weak_entity();
+            let picker = ResourcePicker::new(
+                &self.filtered_resources(),
+                self.res_picker_selected,
+                &self.res_picker_filter,
+                &self.current_resource,
+            );
+            root = root.child(picker.into_element(move |idx, _ev, _window, cx| {
+                weak_res_pick
+                    .update(cx, |this, cx| {
+                        this.res_picker_selected = idx;
+                        this.select_resource(cx);
+                        cx.notify();
+                    })
+                    .ok();
+            }));
+        }
+
+        // Context picker overlay
+        if self.ctx_picker_visible {
+            let weak_ctx_pick = cx.weak_entity();
+            let picker = ContextPicker::new(
+                &self.filtered_contexts(),
+                self.ctx_picker_selected,
+                &self.ctx_picker_filter,
+                &self.current_context,
+                self.ctx_picker_loading,
+                &spinner_text,
+            );
+            root = root.child(picker.into_element(move |idx, _ev, _window, cx| {
+                weak_ctx_pick
+                    .update(cx, |this, cx| {
+                        this.ctx_picker_selected = idx;
+                        this.select_context(cx);
+                        cx.notify();
+                    })
+                    .ok();
+            }));
+        }
+
         // Namespace picker overlay
         if self.ns_picker_visible {
             let picker = NamespacePicker::new(
@@ -1554,10 +1789,9 @@ impl Render for AppView {
                 &spinner_text,
                 PanelColors::from_theme(cx),
             );
-            let weak_ns = weak.clone();
+            let weak_ns_pick = cx.weak_entity();
             root = root.child(picker.into_element(move |idx, _ev, _window, cx| {
-                weak_ns.update(cx, |this, cx| {
-                    // Select the clicked namespace
+                weak_ns_pick.update(cx, |this, cx| {
                     this.ns_picker_selected = idx;
                     this.select_namespace(cx);
                     cx.notify();
