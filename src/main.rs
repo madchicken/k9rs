@@ -129,7 +129,7 @@ fn main() {
             theme.colors.table_head = surface1;
             theme.colors.table_head_foreground = blue;
             theme.colors.table_hover = hsla(232. / 360., 0.20, 0.28, 0.5);
-            theme.colors.table_row_border = hsla(0., 0., 0., 0.0);
+            theme.colors.table_row_border = surface1; // visible column separators
 
             // Editor-specific colors (highlight theme)
             let ht = std::sync::Arc::make_mut(&mut theme.highlight_theme);
@@ -148,9 +148,7 @@ fn main() {
             KeyBinding::new("cmd-q", Quit, None),
             // App navigation — use "app" context which is on the root div
             KeyBinding::new("up", app::MoveUp, Some("app")),
-            KeyBinding::new("k", app::MoveUp, Some("app")),
             KeyBinding::new("down", app::MoveDown, Some("app")),
-            KeyBinding::new("j", app::MoveDown, Some("app")),
             KeyBinding::new("enter", app::Enter, Some("app")),
             KeyBinding::new("escape", app::GoBack, Some("app")),
             KeyBinding::new(":", app::ActivateCommand, Some("app")),

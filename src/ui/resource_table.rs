@@ -1,6 +1,7 @@
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::table::{Column, TableDelegate, TableState};
+use gpui_component::theme::ActiveTheme;
 
 use crate::model::table::TableData;
 
@@ -89,7 +90,7 @@ impl TableDelegate for ResourceTableDelegate {
         &mut self,
         col_ix: usize,
         _window: &mut Window,
-        _cx: &mut Context<TableState<Self>>,
+        cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
         let name = self
             .display_names
@@ -97,29 +98,14 @@ impl TableDelegate for ResourceTableDelegate {
             .cloned()
             .unwrap_or_default();
 
-        let is_last = col_ix + 1 == self.columns.len();
+        let primary = cx.theme().primary;
 
         div()
             .size_full()
-            .flex()
-            .items_center()
             .text_sm()
-            .text_color(rgb(0x89b4fa))
+            .text_color(primary)
             .font_weight(FontWeight::MEDIUM)
-            .child(
-                div()
-                    .flex_1()
-                    .child(name),
-            )
-            .when(!is_last, |this| {
-                this.child(
-                    div()
-                        .h(px(14.0))
-                        .w(px(1.0))
-                        .bg(rgb(0x45475a))
-                        .flex_shrink_0(),
-                )
-            })
+            .child(name)
     }
 
     fn render_td(
@@ -137,28 +123,10 @@ impl TableDelegate for ResourceTableDelegate {
             .cloned()
             .unwrap_or_default();
 
-        let is_last = col_ix + 1 == self.columns.len();
-
         div()
             .size_full()
-            .flex()
-            .items_center()
             .overflow_x_hidden()
             .text_sm()
-            .child(
-                div()
-                    .flex_1()
-                    .overflow_x_hidden()
-                    .child(SharedString::from(text)),
-            )
-            .when(!is_last, |this| {
-                this.child(
-                    div()
-                        .h(px(14.0))
-                        .w(px(1.0))
-                        .bg(rgb(0x313244))
-                        .flex_shrink_0(),
-                )
-            })
+            .child(SharedString::from(text))
     }
 }

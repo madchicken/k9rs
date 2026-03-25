@@ -87,31 +87,31 @@ impl NamespacePicker {
                             .child("Switch Namespace"),
                     ),
             )
-            // Filter input display
-            .child(
-                div()
-                    .px_3()
-                    .py_2()
-                    .border_b_1()
-                    .border_color(colors.border)
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .child(
-                        div()
-                            .text_color(colors.muted_foreground)
-                            .child("⌕"),
-                    )
-                    .child(
-                        div()
-                            .text_color(colors.foreground)
-                            .child(if self.filter.is_empty() {
-                                SharedString::from("(type to filter)")
-                            } else {
-                                SharedString::from(self.filter.clone())
-                            }),
-                    ),
-            );
+            // Live filter indicator — only shown when typing
+            .when(!self.filter.is_empty(), |this| {
+                this.child(
+                    div()
+                        .px_3()
+                        .py_1()
+                        .border_b_1()
+                        .border_color(colors.border)
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            div()
+                                .text_color(colors.muted_foreground)
+                                .text_sm()
+                                .child("⌕"),
+                        )
+                        .child(
+                            div()
+                                .text_color(colors.foreground)
+                                .text_sm()
+                                .child(SharedString::from(self.filter.clone())),
+                        ),
+                )
+            });
 
         // Namespace list (scrollable)
         let mut list = div()
@@ -208,7 +208,7 @@ impl NamespacePicker {
                 .border_t_1()
                 .border_color(colors.border)
                 .text_color(colors.muted_foreground)
-                .child("↑↓: navigate | Type to filter | Enter/Click: select | Esc: close | Backspace: clear filter"),
+                .child("↑↓: navigate | Type to filter | Esc: close"),
         );
 
         panel

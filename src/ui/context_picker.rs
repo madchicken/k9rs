@@ -1,6 +1,8 @@
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 
+use crate::ui::theme::PanelColors;
+
 /// A modal overlay for selecting a Kubernetes context
 pub struct ContextPicker {
     contexts: Vec<String>,
@@ -9,6 +11,7 @@ pub struct ContextPicker {
     current_context: String,
     loading: bool,
     spinner: String,
+    colors: PanelColors,
 }
 
 impl ContextPicker {
@@ -19,6 +22,7 @@ impl ContextPicker {
         current_context: &str,
         loading: bool,
         spinner: &str,
+        colors: PanelColors,
     ) -> Self {
         Self {
             contexts: contexts.to_vec(),
@@ -27,38 +31,41 @@ impl ContextPicker {
             current_context: current_context.to_string(),
             loading,
             spinner: spinner.to_string(),
+            colors,
         }
     }
 
     pub fn into_element(
         self,
-        on_select: impl Fn(usize, &ClickEvent, &mut Window, &mut App) + 'static,
+        on_item_click: impl Fn(usize, &MouseDownEvent, &mut Window, &mut App) + 'static,
     ) -> Div {
+        let overlay = self.colors.overlay;
         div()
             .absolute()
             .top(px(0.0))
             .left(px(0.0))
             .size_full()
-            .bg(rgba(0x00000088))
+            .bg(overlay)
             .flex()
             .justify_center()
             .pt_8()
             .on_mouse_down(MouseButton::Left, |_, _, _| {})
-            .child(self.render_panel(on_select))
+            .child(self.render_panel(on_item_click))
     }
 
     fn render_panel(
         self,
-        on_select: impl Fn(usize, &ClickEvent, &mut Window, &mut App) + 'static,
+        on_item_click: impl Fn(usize, &MouseDownEvent, &mut Window, &mut App) + 'static,
     ) -> Div {
-        let on_select = std::rc::Rc::new(on_select);
+        let on_item_click = std::rc::Rc::new(on_item_click);
+        let colors = &self.colors;
 
         let mut panel = div()
             .w(px(500.0))
             .max_h(px(500.0))
-            .bg(rgb(0x313244))
+            .bg(colors.muted)
             .border_1()
-            .border_color(rgb(0x585b70))
+            .border_color(colors.selection)
             .rounded_lg()
             .flex()
             .flex_col()
@@ -72,33 +79,33 @@ impl ContextPicker {
                     .items_center()
                     .gap_2()
                     .border_b_1()
-                    .border_color(rgb(0x45475a))
+                    .border_color(colors.border)
                     .child(
                         div()
-                            .text_color(rgb(0x89b4fa))
+                            .text_color(colors.primary)
                             .child("Switch Context"),
                     ),
             )
-            // Live filter indicator
+            // Live filter indicator — only shown when typing
             .when(!self.filter.is_empty(), |this| {
                 this.child(
                     div()
                         .px_3()
                         .py_1()
                         .border_b_1()
-                        .border_color(rgb(0x45475a))
+                        .border_color(colors.border)
                         .flex()
                         .items_center()
                         .gap_2()
                         .child(
                             div()
-                                .text_color(rgb(0x6c7086))
+                                .text_color(colors.muted_foreground)
                                 .text_sm()
                                 .child("⌕"),
                         )
                         .child(
                             div()
-                                .text_color(rgb(0xcdd6f4))
+                                .text_color(colors.foreground)
                                 .text_sm()
                                 .child(SharedString::from(self.filter.clone())),
                         ),
@@ -124,12 +131,12 @@ impl ContextPicker {
                     .gap_2()
                     .child(
                         div()
-                            .text_color(rgb(0x89b4fa))
+                            .text_color(colors.primary)
                             .child(SharedString::from(self.spinner)),
                     )
                     .child(
                         div()
-                            .text_color(rgb(0x6c7086))
+                            .text_color(colors.muted_foreground)
                             .child("Loading contexts..."),
                     ),
             );
@@ -138,7 +145,7 @@ impl ContextPicker {
                 div()
                     .px_3()
                     .py_2()
-                    .text_color(rgb(0x6c7086))
+                    .text_color(colors.muted_foreground)
                     .child("No matching contexts"),
             );
         } else {
@@ -147,20 +154,21 @@ impl ContextPicker {
                 let is_current = *ctx == self.current_context;
 
                 let bg = if is_selected {
-                    rgb(0x585b70)
+                    colors.selection
                 } else {
-                    rgb(0x313244)
+                    colors.muted
                 };
 
                 let text_color = if is_current {
-                    rgb(0xa6e3a1)
+                    colors.success
                 } else if is_selected {
-                    rgb(0xcdd6f4)
+                    colors.foreground
                 } else {
-                    rgb(0xbac2de)
+                    colors.secondary_foreground
                 };
 
-                let cb = on_select.clone();
+                let hover_bg = colors.border;
+                let cb = on_item_click.clone();
                 let mut row = div()
                     .id(SharedString::from(format!("ctx-row-{i}")))
                     .px_3()
@@ -168,15 +176,17 @@ impl ContextPicker {
                     .bg(bg)
                     .text_color(text_color)
                     .cursor_pointer()
-                    .hover(|s| s.bg(rgb(0x45475a)))
+                    .hover(move |s| s.bg(hover_bg))
                     .flex()
                     .gap_2()
-                    .on_click(move |ev, window, cx| cb(i, ev, window, cx));
+                    .on_mouse_down(MouseButton::Left, move |ev, window, cx| {
+                        cb(i, ev, window, cx);
+                    });
 
                 if is_current {
                     row = row.child(
                         div()
-                            .text_color(rgb(0xa6e3a1))
+                            .text_color(colors.success)
                             .child("*"),
                     );
                 }
@@ -195,8 +205,8 @@ impl ContextPicker {
                 .px_3()
                 .py_1()
                 .border_t_1()
-                .border_color(rgb(0x45475a))
-                .text_color(rgb(0x6c7086))
+                .border_color(colors.border)
+                .text_color(colors.muted_foreground)
                 .child("↑↓: navigate | Type to filter | Esc: close"),
         );
 

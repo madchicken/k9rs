@@ -632,6 +632,13 @@ impl AppView {
         )
     }
 
+    fn can_port_forward(&self) -> bool {
+        matches!(
+            self.current_resource.as_str(),
+            "pods" | "deployments" | "statefulsets" | "daemonsets"
+        )
+    }
+
     fn restart_current_resource(&mut self, cx: &mut Context<Self>) {
         // Determine what to restart: detail view resource or selected table row
         let (name, resource_type) = if let Some(detail) = &self.detail_data {
@@ -1394,10 +1401,12 @@ impl Render for AppView {
             self.ensure_yaml_editor(window, cx);
         }
 
-        // When detail is visible, focus the app root so key bindings work
-        // (the table is not rendered, so its focus handle is stale)
-        if self.detail_visible && !self.focus_handle.is_focused(window) {
-            self.focus_handle.focus(window);
+        // When detail or picker is visible, focus the app root so key bindings work
+        // (the table captures arrow keys otherwise)
+        if self.detail_visible || self.any_picker_visible() {
+            if !self.focus_handle.is_focused(window) {
+                self.focus_handle.focus(window);
+            }
         }
 
         let weak = cx.weak_entity();
@@ -1464,21 +1473,14 @@ impl Render for AppView {
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
             .on_action(cx.listener(|this, _: &MoveUp, _window, cx| {
-                // When a picker is open, ignore j/k actions — arrows are handled separately
-                if this.any_picker_visible() {
-                    return;
-                }
-                if this.filter_mode {
+                if this.filter_mode && !this.any_picker_visible() {
                     this.filter_mode = false; // done typing, now navigating
                 }
                 this.move_selection(-1);
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &MoveDown, _window, cx| {
-                if this.any_picker_visible() {
-                    return;
-                }
-                if this.filter_mode {
+                if this.filter_mode && !this.any_picker_visible() {
                     this.filter_mode = false; // done typing, now navigating
                 }
                 this.move_selection(1);
@@ -1772,13 +1774,8 @@ impl Render for AppView {
                         }
                     }
                 } else if this.any_picker_visible() {
-                    // Arrow keys navigate, all other chars go to filter
-                    let key: &str = event.keystroke.key.as_ref();
-                    if key == "up" {
-                        this.move_selection(-1);
-                    } else if key == "down" {
-                        this.move_selection(1);
-                    } else if let Some(key_char) = &event.keystroke.key_char {
+                    // All chars go to filter (arrows handled by MoveUp/MoveDown actions)
+                    if let Some(key_char) = &event.keystroke.key_char {
                         if let Some(f) = this.active_picker_filter_mut() {
                             f.push_str(key_char);
                         }
@@ -1881,11 +1878,14 @@ impl Render for AppView {
                             self.detail_logs_loading,
                             SPINNER_FRAMES[self.spinner_frame % SPINNER_FRAMES.len()],
                             self.can_restart(),
+                            self.can_port_forward(),
                             self.yaml_editor.clone(),
                             PanelColors::from_theme(cx),
                         );
                         let weak_detail = weak.clone();
                         let weak_restart = weak.clone();
+                        let weak_apply = weak.clone();
+                        let weak_pf = weak.clone();
                         let weak_pod = weak.clone();
                         body = body.child(div().flex_1().child(
                             panel.into_element_with_clicks(
@@ -1921,6 +1921,27 @@ impl Render for AppView {
                                                     }
                                                 }
                                             }
+                                            cx.notify();
+                                        })
+                                        .ok();
+                                },
+                                // Apply YAML button
+                                move |_ev, _window, cx| {
+                                    weak_apply
+                                        .update(cx, |this, cx| {
+                                            if this.pending_confirm.is_none() {
+                                                this.pending_confirm =
+                                                    Some(PendingConfirmation::ApplyYaml);
+                                            }
+                                            cx.notify();
+                                        })
+                                        .ok();
+                                },
+                                // Port Forward button
+                                move |_ev, _window, cx| {
+                                    weak_pf
+                                        .update(cx, |this, cx| {
+                                            this.open_port_forward_dialog(cx);
                                             cx.notify();
                                         })
                                         .ok();
@@ -1989,6 +2010,7 @@ impl Render for AppView {
                 self.res_picker_selected,
                 &self.res_picker_filter,
                 &self.current_resource,
+                PanelColors::from_theme(cx),
             );
             root = root.child(picker.into_element(move |idx, _ev, _window, cx| {
                 weak_res_pick
@@ -2011,6 +2033,7 @@ impl Render for AppView {
                 &self.current_context,
                 self.ctx_picker_loading,
                 &spinner_text,
+                PanelColors::from_theme(cx),
             );
             root = root.child(picker.into_element(move |idx, _ev, _window, cx| {
                 weak_ctx_pick
@@ -2060,8 +2083,30 @@ impl Render for AppView {
 
         // Port forward list overlay
         if self.pf_list_visible {
+            let weak_pf_stop = cx.weak_entity();
             let list = PortForwardList::new(&self.port_forwards, self.pf_list_selected, PanelColors::from_theme(cx));
-            root = root.child(list.into_element());
+            root = root.child(list.into_element(move |id, _ev, _window, cx| {
+                weak_pf_stop
+                    .update(cx, |this, cx| {
+                        let desc = this
+                            .port_forwards
+                            .iter()
+                            .find(|e| e.id == id)
+                            .map(|e| {
+                                format!(
+                                    "{}:{} -> {}",
+                                    e.pod_name, e.remote_port, e.local_port
+                                )
+                            })
+                            .unwrap_or_default();
+                        this.pending_confirm = Some(PendingConfirmation::StopPortForward {
+                            id,
+                            description: desc,
+                        });
+                        cx.notify();
+                    })
+                    .ok();
+            }));
         }
 
         root

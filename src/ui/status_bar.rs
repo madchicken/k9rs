@@ -90,7 +90,7 @@ impl StatusBar {
             row = row.child(
                 div()
                     .text_color(muted_fg)
-                    .child("':' cmd | / filter | j/k nav | Ctrl-N ns | Ctrl-K ctx | Ctrl-R res | Cmd-Q quit"),
+                    .child("':' cmd | / filter | ↑↓ nav | Ctrl-N ns | Ctrl-K ctx | Ctrl-R res | Cmd-Q quit"),
             );
 
             row
