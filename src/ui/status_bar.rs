@@ -1,4 +1,5 @@
 use gpui::*;
+use gpui_component::ActiveTheme;
 
 /// Bottom status bar — shows connection status, command input, or filter input
 pub struct StatusBar {
@@ -26,19 +27,27 @@ impl StatusBar {
         }
     }
 
-    pub fn into_element(self) -> Div {
+    pub fn into_element(self, cx: &App) -> Div {
+        let theme = cx.theme();
+        let muted_bg = theme.muted;
+        let primary = theme.primary;
+        let foreground = theme.foreground;
+        let success = theme.success;
+        let warning = theme.warning;
+        let muted_fg = theme.muted_foreground;
+
         let content = if self.command_mode {
             div()
                 .flex()
                 .gap_1()
                 .child(
                     div()
-                        .text_color(rgb(0xf9e2af))
+                        .text_color(warning)
                         .child(":"),
                 )
                 .child(
                     div()
-                        .text_color(rgb(0xcdd6f4))
+                        .text_color(foreground)
                         .child(self.command_input),
                 )
         } else if self.filter_mode {
@@ -47,12 +56,12 @@ impl StatusBar {
                 .gap_1()
                 .child(
                     div()
-                        .text_color(rgb(0x89b4fa))
+                        .text_color(primary)
                         .child("/"),
                 )
                 .child(
                     div()
-                        .text_color(rgb(0xcdd6f4))
+                        .text_color(foreground)
                         .child(self.filter_text),
                 )
         } else {
@@ -61,7 +70,7 @@ impl StatusBar {
                 .gap_4()
                 .child(
                     div()
-                        .text_color(rgb(0xa6e3a1))
+                        .text_color(success)
                         .child(self.message),
                 );
 
@@ -71,14 +80,14 @@ impl StatusBar {
                     div()
                         .flex()
                         .gap_1()
-                        .child(div().text_color(rgb(0x89b4fa)).child("/"))
-                        .child(div().text_color(rgb(0xcdd6f4)).child(self.filter_text)),
+                        .child(div().text_color(primary).child("/"))
+                        .child(div().text_color(foreground).child(self.filter_text)),
                 );
             }
 
             row = row.child(
                 div()
-                    .text_color(rgb(0x6c7086))
+                    .text_color(muted_fg)
                     .child("':' cmd | / filter | j/k nav | Ctrl-N ns | Cmd-Q quit"),
             );
 
@@ -90,7 +99,7 @@ impl StatusBar {
             .w_full()
             .px_4()
             .py_1()
-            .bg(rgb(0x313244))
+            .bg(muted_bg)
             .child(content)
     }
 }
