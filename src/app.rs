@@ -14,7 +14,7 @@ use crate::ui::namespace_picker::NamespacePicker;
 use crate::ui::port_forward_dialog::PortForwardDialog;
 use crate::ui::port_forward_list::PortForwardList;
 use crate::ui::resource_table::ResourceTableDelegate;
-use crate::ui::sidebar::Sidebar;
+use crate::ui::sidebar::build_sidebar;
 use crate::ui::status_bar::StatusBar;
 use crate::ui::theme::PanelColors;
 
@@ -1071,11 +1071,7 @@ impl Render for AppView {
 
         // (Table data is updated in load_resource_data and update_table_filter)
 
-        let sidebar = Sidebar::new(
-            &self.current_resource,
-            self.sidebar_selected,
-            self.active_panel == FocusPanel::Sidebar,
-        );
+        let pf_count = self.active_pf_count();
 
         let loading = self.loading;
         let spinner_text =
@@ -1084,7 +1080,6 @@ impl Render for AppView {
 
         let weak = cx.weak_entity();
 
-        let pf_count = self.active_pf_count();
         let status_msg = if pf_count > 0 {
             format!("{} | PF: {} active", self.status_message, pf_count)
         } else {
@@ -1319,18 +1314,23 @@ impl Render for AppView {
                 let weak_sidebar = weak.clone();
                 let detail_visible = self.detail_visible;
 
+                let current_resource = self.current_resource.clone();
                 let mut body = div().flex().flex_1().overflow_hidden().child(
-                    sidebar.into_element_with_clicks(cx, move |idx, _ev, _window, cx| {
-                        weak_sidebar
-                            .update(cx, |this, cx| {
-                                if let Some(entry) = RESOURCES.get(idx) {
-                                    this.switch_resource(entry.api_name, cx);
-                                    this.active_panel = FocusPanel::Table;
-                                }
-                                cx.notify();
-                            })
-                            .ok();
-                    }),
+                    build_sidebar(
+                        &current_resource,
+                        pf_count,
+                        move |idx, _ev, _window, cx| {
+                            weak_sidebar
+                                .update(cx, |this, cx| {
+                                    if let Some(entry) = RESOURCES.get(idx) {
+                                        this.switch_resource(entry.api_name, cx);
+                                        this.active_panel = FocusPanel::Table;
+                                    }
+                                    cx.notify();
+                                })
+                                .ok();
+                        },
+                    ),
                 );
 
                 if detail_visible {
@@ -1453,7 +1453,15 @@ impl Render for AppView {
                 &spinner_text,
                 PanelColors::from_theme(cx),
             );
-            root = root.child(picker.into_element());
+            let weak_ns = weak.clone();
+            root = root.child(picker.into_element(move |idx, _ev, _window, cx| {
+                weak_ns.update(cx, |this, cx| {
+                    // Select the clicked namespace
+                    this.ns_picker_selected = idx;
+                    this.select_namespace(cx);
+                    cx.notify();
+                }).ok();
+            }));
         }
 
         // Port forward dialog overlay

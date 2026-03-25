@@ -34,8 +34,10 @@ impl NamespacePicker {
         }
     }
 
-    pub fn into_element(self) -> Div {
-        // Full-screen backdrop to capture clicks and prevent pass-through
+    pub fn into_element(
+        self,
+        on_item_click: impl Fn(usize, &MouseDownEvent, &mut Window, &mut App) + 'static,
+    ) -> Div {
         let overlay = self.colors.overlay;
         div()
             .absolute()
@@ -49,10 +51,14 @@ impl NamespacePicker {
             .on_mouse_down(MouseButton::Left, |_, _, _| {
                 // Absorb clicks on the backdrop
             })
-            .child(self.render_panel())
+            .child(self.render_panel(on_item_click))
     }
 
-    fn render_panel(self) -> Div {
+    fn render_panel(
+        self,
+        on_item_click: impl Fn(usize, &MouseDownEvent, &mut Window, &mut App) + 'static,
+    ) -> Div {
+        let on_item_click = std::rc::Rc::new(on_item_click);
         let colors = &self.colors;
         let mut panel = div()
             .w(px(400.0))
@@ -155,13 +161,20 @@ impl NamespacePicker {
                     colors.secondary_foreground
                 };
 
+                let hover_bg = colors.border;
+                let cb = on_item_click.clone();
                 let mut row = div()
                     .px_3()
                     .py_1()
                     .bg(bg)
                     .text_color(text_color)
                     .flex()
-                    .gap_2();
+                    .gap_2()
+                    .cursor_pointer()
+                    .hover(move |s| s.bg(hover_bg))
+                    .on_mouse_down(MouseButton::Left, move |ev, window, cx| {
+                        cb(i, ev, window, cx);
+                    });
 
                 if is_current {
                     row = row.child(
