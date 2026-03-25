@@ -2,6 +2,13 @@
 name = "k9rs"
 version = "0.1.0"
 edition = "2021"
+description = "A GPU-accelerated Kubernetes CLI manager inspired by k9s, built with GPUI"
+license = "MIT"
+repository = "https://github.com/madchicken/k9rs"
+homepage = "https://github.com/madchicken/k9rs"
+keywords = ["kubernetes", "k8s", "cli", "tui", "gpui"]
+categories = ["command-line-utilities", "development-tools"]
+readme = "README.md"
 
 [dependencies]
 # UI Framework (Zed's GPU-accelerated UI)
