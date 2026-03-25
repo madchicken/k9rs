@@ -8,11 +8,13 @@ use crate::model::detail::{DetailTab, ResourceDetail};
 use crate::model::port_forward::{PodPort, PortForwardEntry, PortForwardStatus};
 use crate::model::resources::{resource_index, RESOURCES};
 use crate::model::table::TableData;
+use crate::ui::context_picker::ContextPicker;
 use crate::ui::detail_panel::DetailPanel;
 use crate::ui::header::build_header;
 use crate::ui::namespace_picker::NamespacePicker;
 use crate::ui::port_forward_dialog::PortForwardDialog;
 use crate::ui::port_forward_list::PortForwardList;
+use crate::ui::resource_picker::ResourcePicker;
 use crate::ui::resource_table::ResourceTableDelegate;
 use crate::ui::sidebar::build_sidebar;
 use crate::ui::status_bar::StatusBar;
@@ -27,7 +29,9 @@ actions!(
         GoBack,
         ActivateCommand,
         ActivateFilter,
+        ToggleContextPicker,
         ToggleNamespacePicker,
+        ToggleResourcePicker,
         ToggleSidebar,
         Backspace,
         DetailTab1,
@@ -45,6 +49,15 @@ actions!(
 enum FocusPanel {
     Sidebar,
     Table,
+}
+
+/// A pending confirmation for a destructive action
+#[derive(Clone)]
+enum PendingConfirmation {
+    Restart { name: String, resource_type: String },
+    ApplyYaml,
+    StartPortForward { description: String },
+    StopPortForward { id: u64, description: String },
 }
 
 pub struct AppView {
@@ -99,6 +112,18 @@ pub struct AppView {
     ns_picker_list: Vec<String>,
     ns_picker_selected: usize,
     ns_picker_filter: String,
+    // Context picker
+    ctx_picker_visible: bool,
+    ctx_picker_loading: bool,
+    ctx_picker_list: Vec<String>,
+    ctx_picker_selected: usize,
+    ctx_picker_filter: String,
+    // Resource picker
+    res_picker_visible: bool,
+    res_picker_selected: usize,
+    res_picker_filter: String,
+    // Confirmation banner for destructive actions
+    pending_confirm: Option<PendingConfirmation>,
 }
 
 impl Focusable for AppView {
@@ -170,10 +195,20 @@ impl AppView {
             ns_picker_list: vec![],
             ns_picker_selected: 0,
             ns_picker_filter: String::new(),
+            ctx_picker_visible: false,
+            ctx_picker_loading: false,
+            ctx_picker_list: vec![],
+            ctx_picker_selected: 0,
+            ctx_picker_filter: String::new(),
+            res_picker_visible: false,
+            res_picker_selected: 0,
+            res_picker_filter: String::new(),
+            pending_confirm: None,
         };
 
         if let Some(ctx) = context {
             view.current_context = ctx.to_string();
+            K8sClient::set_active_context(ctx);
             view.status_message = "Connected".to_string();
         } else {
             view.detect_context();
@@ -393,6 +428,9 @@ impl AppView {
         self.detail_logs = None;
         self.detail_logs_loading = false;
         self.yaml_editor = None;
+        // Exit filter/command mode when entering detail view
+        self.filter_mode = false;
+        self.command_mode = false;
 
         let resource_type = self.current_resource.clone();
         let namespace = self.current_namespace.clone();
@@ -588,6 +626,13 @@ impl AppView {
     }
 
     fn can_restart(&self) -> bool {
+        matches!(
+            self.current_resource.as_str(),
+            "pods" | "deployments" | "statefulsets" | "daemonsets"
+        )
+    }
+
+    fn can_port_forward(&self) -> bool {
         matches!(
             self.current_resource.as_str(),
             "pods" | "deployments" | "statefulsets" | "daemonsets"
@@ -1016,7 +1061,23 @@ impl AppView {
             self.pf_list_selected = new_idx.clamp(0, count as i32 - 1) as usize;
             return;
         }
-        if self.ns_picker_visible {
+        if self.res_picker_visible {
+            let filtered = self.filtered_resources();
+            let count = filtered.len();
+            if count == 0 {
+                return;
+            }
+            let new_idx = self.res_picker_selected as i32 + delta;
+            self.res_picker_selected = new_idx.clamp(0, count as i32 - 1) as usize;
+        } else if self.ctx_picker_visible {
+            let filtered = self.filtered_contexts();
+            let count = filtered.len();
+            if count == 0 {
+                return;
+            }
+            let new_idx = self.ctx_picker_selected as i32 + delta;
+            self.ctx_picker_selected = new_idx.clamp(0, count as i32 - 1) as usize;
+        } else if self.ns_picker_visible {
             let filtered = self.filtered_namespaces();
             let count = filtered.len();
             if count == 0 {
@@ -1057,6 +1118,7 @@ impl AppView {
             self.current_namespace = ns.clone();
             self.ns_picker_visible = false;
             self.ns_picker_filter.clear();
+
             self.load_resource_data(cx);
         }
     }
@@ -1065,11 +1127,207 @@ impl AppView {
         if self.ns_picker_visible {
             self.ns_picker_visible = false;
             self.ns_picker_filter.clear();
+
         } else {
             self.ns_picker_visible = true;
             self.ns_picker_filter.clear();
             self.ns_picker_selected = 0;
+
             self.load_namespaces(cx);
+        }
+    }
+
+    // ── Context picker methods ──
+
+    fn load_contexts(&mut self, cx: &mut Context<Self>) {
+        self.ctx_picker_loading = true;
+        cx.spawn(async move |this, cx: &mut AsyncApp| {
+            // Reading kubeconfig is synchronous but we do it off the main thread
+            let result = K8sClient::list_contexts();
+            cx.update(|cx| {
+                this.update(cx, |this, cx| {
+                    this.ctx_picker_loading = false;
+                    match result {
+                        Ok(mut names) => {
+                            names.sort();
+                            this.ctx_picker_selected = names
+                                .iter()
+                                .position(|n| n == &this.current_context)
+                                .unwrap_or(0);
+                            this.ctx_picker_list = names;
+                        }
+                        Err(e) => {
+                            this.status_message = format!("Error listing contexts: {e}");
+                            this.ctx_picker_visible = false;
+                        }
+                    }
+                    cx.notify();
+                })
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn filtered_contexts(&self) -> Vec<String> {
+        if self.ctx_picker_filter.is_empty() {
+            self.ctx_picker_list.clone()
+        } else {
+            let filter = self.ctx_picker_filter.to_lowercase();
+            self.ctx_picker_list
+                .iter()
+                .filter(|c| c.to_lowercase().contains(&filter))
+                .cloned()
+                .collect()
+        }
+    }
+
+    fn select_context(&mut self, cx: &mut Context<Self>) {
+        let filtered = self.filtered_contexts();
+        if let Some(ctx) = filtered.get(self.ctx_picker_selected) {
+            self.current_context = ctx.clone();
+            K8sClient::set_active_context(ctx);
+            self.ctx_picker_visible = false;
+            self.ctx_picker_filter.clear();
+
+            // Reset namespace to default and reload
+            self.current_namespace = "default".to_string();
+            self.load_resource_data(cx);
+        }
+    }
+
+    fn toggle_context_picker(&mut self, cx: &mut Context<Self>) {
+        if self.ctx_picker_visible {
+            self.ctx_picker_visible = false;
+            self.ctx_picker_filter.clear();
+
+        } else {
+            self.ctx_picker_visible = true;
+            self.ctx_picker_filter.clear();
+            self.ctx_picker_selected = 0;
+
+            self.load_contexts(cx);
+        }
+    }
+
+    // ── Resource picker methods ──
+
+    fn filtered_resources(&self) -> Vec<(String, String, String)> {
+        let all: Vec<(String, String, String)> = RESOURCES
+            .iter()
+            .map(|r| {
+                (
+                    r.display_name.to_string(),
+                    r.api_name.to_string(),
+                    r.category.to_string(),
+                )
+            })
+            .collect();
+        if self.res_picker_filter.is_empty() {
+            all
+        } else {
+            let filter = self.res_picker_filter.to_lowercase();
+            all.into_iter()
+                .filter(|(display, api, _)| {
+                    display.to_lowercase().contains(&filter)
+                        || api.to_lowercase().contains(&filter)
+                })
+                .collect()
+        }
+    }
+
+    fn select_resource(&mut self, cx: &mut Context<Self>) {
+        let filtered = self.filtered_resources();
+        if let Some((_, api_name, _)) = filtered.get(self.res_picker_selected) {
+            let api_name = api_name.clone();
+            self.res_picker_visible = false;
+            self.res_picker_filter.clear();
+
+            self.switch_resource(&api_name, cx);
+        }
+    }
+
+    // ── Confirmation methods ──
+
+    fn confirm_message(confirm: &PendingConfirmation) -> String {
+        match confirm {
+            PendingConfirmation::Restart {
+                name,
+                resource_type,
+            } => format!("Restart {} '{}'?", resource_type, name),
+            PendingConfirmation::ApplyYaml => "Apply YAML changes?".to_string(),
+            PendingConfirmation::StartPortForward { description } => {
+                format!("Start port forward {}?", description)
+            }
+            PendingConfirmation::StopPortForward { description, .. } => {
+                format!("Stop port forward {}?", description)
+            }
+        }
+    }
+
+    fn execute_confirmed(&mut self, cx: &mut Context<Self>) {
+        let confirm = match self.pending_confirm.take() {
+            Some(c) => c,
+            None => return,
+        };
+        match confirm {
+            PendingConfirmation::Restart { .. } => {
+                self.restart_current_resource(cx);
+            }
+            PendingConfirmation::ApplyYaml => {
+                self.apply_yaml(cx);
+            }
+            PendingConfirmation::StartPortForward { .. } => {
+                self.start_port_forward(cx);
+            }
+            PendingConfirmation::StopPortForward { id, .. } => {
+                self.stop_port_forward(id);
+            }
+        }
+    }
+
+    /// Returns true if any picker overlay is currently open
+    fn any_picker_visible(&self) -> bool {
+        self.ns_picker_visible || self.ctx_picker_visible || self.res_picker_visible
+    }
+
+    /// Get mutable ref to the active picker's filter string
+    fn active_picker_filter_mut(&mut self) -> Option<&mut String> {
+        if self.ns_picker_visible {
+            Some(&mut self.ns_picker_filter)
+        } else if self.ctx_picker_visible {
+            Some(&mut self.ctx_picker_filter)
+        } else if self.res_picker_visible {
+            Some(&mut self.res_picker_filter)
+        } else {
+            None
+        }
+    }
+
+    /// Reset the active picker's selection index to 0
+    fn reset_active_picker_selection(&mut self) {
+        if self.ns_picker_visible {
+            self.ns_picker_selected = 0;
+        } else if self.ctx_picker_visible {
+            self.ctx_picker_selected = 0;
+        } else if self.res_picker_visible {
+            self.res_picker_selected = 0;
+        }
+    }
+
+    fn toggle_resource_picker(&mut self) {
+        if self.res_picker_visible {
+            self.res_picker_visible = false;
+            self.res_picker_filter.clear();
+
+        } else {
+            self.res_picker_visible = true;
+            self.res_picker_filter.clear();
+            self.res_picker_selected = RESOURCES
+                .iter()
+                .position(|r| r.api_name == self.current_resource)
+                .unwrap_or(0);
+
         }
     }
 
@@ -1119,11 +1377,20 @@ const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦
 impl Render for AppView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // Animate spinner while anything is loading
-        let any_loading = self.loading || self.detail_loading || self.detail_logs_loading;
+        let any_loading = self.loading
+            || self.detail_loading
+            || self.detail_logs_loading
+            || self.ns_picker_loading
+            || self.ctx_picker_loading;
         if any_loading {
             self.spinner_frame = (self.spinner_frame + 1) % SPINNER_FRAMES.len();
             cx.on_next_frame(window, |this, _window, cx| {
-                if this.loading || this.detail_loading || this.detail_logs_loading {
+                if this.loading
+                    || this.detail_loading
+                    || this.detail_logs_loading
+                    || this.ns_picker_loading
+                    || this.ctx_picker_loading
+                {
                     cx.notify();
                 }
             });
@@ -1134,10 +1401,12 @@ impl Render for AppView {
             self.ensure_yaml_editor(window, cx);
         }
 
-        // When detail is visible, focus the app root so key bindings work
-        // (the table is not rendered, so its focus handle is stale)
-        if self.detail_visible && !self.focus_handle.is_focused(window) {
-            self.focus_handle.focus(window);
+        // When detail or picker is visible, focus the app root so key bindings work
+        // (the table captures arrow keys otherwise)
+        if self.detail_visible || self.any_picker_visible() {
+            if !self.focus_handle.is_focused(window) {
+                self.focus_handle.focus(window);
+            }
         }
 
         let weak = cx.weak_entity();
@@ -1204,20 +1473,30 @@ impl Render for AppView {
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
             .on_action(cx.listener(|this, _: &MoveUp, _window, cx| {
+                if this.filter_mode && !this.any_picker_visible() {
+                    this.filter_mode = false; // done typing, now navigating
+                }
                 this.move_selection(-1);
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &MoveDown, _window, cx| {
+                if this.filter_mode && !this.any_picker_visible() {
+                    this.filter_mode = false; // done typing, now navigating
+                }
                 this.move_selection(1);
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &ActivateCommand, _window, cx| {
-                this.command_mode = true;
-                this.command_input.clear();
+                if !this.any_picker_visible() {
+                    this.command_mode = true;
+                    this.command_input.clear();
+                }
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &ActivateFilter, _window, cx| {
-                if !this.detail_visible {
+                if this.any_picker_visible() {
+                    // `/` inside a picker is just another filter char — ignore the action
+                } else if !this.detail_visible {
                     this.filter_mode = true;
                     this.filter_text.clear();
                     this.selected_row = 0;
@@ -1226,13 +1505,30 @@ impl Render for AppView {
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &GoBack, window, cx| {
-                if this.pf_dialog_visible {
+                if this.pending_confirm.is_some() {
+                    this.pending_confirm = None;
+                } else if this.pf_dialog_visible {
                     this.pf_dialog_visible = false;
                 } else if this.pf_list_visible {
                     this.pf_list_visible = false;
-                } else if this.ns_picker_visible {
-                    this.ns_picker_visible = false;
-                    this.ns_picker_filter.clear();
+                } else if this.any_picker_visible() {
+                    // If there's filter text, first Esc clears it; second Esc closes picker
+                    let has_filter = this.active_picker_filter_mut()
+                        .map(|f| !f.is_empty())
+                        .unwrap_or(false);
+                    if has_filter {
+                        if let Some(f) = this.active_picker_filter_mut() {
+                            f.clear();
+                        }
+                        this.reset_active_picker_selection();
+                    } else {
+                        this.res_picker_visible = false;
+                        this.res_picker_filter.clear();
+                        this.ctx_picker_visible = false;
+                        this.ctx_picker_filter.clear();
+                        this.ns_picker_visible = false;
+                        this.ns_picker_filter.clear();
+                    }
                 } else if this.detail_visible {
                     this.close_detail();
                     // Re-focus the table
@@ -1256,8 +1552,25 @@ impl Render for AppView {
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &Enter, window, cx| {
-                if this.pf_dialog_visible {
-                    this.start_port_forward(cx);
+                if this.pending_confirm.is_some() {
+                    this.execute_confirmed(cx);
+                } else if this.pf_dialog_visible {
+                    let desc = format!(
+                        "{}:{} -> localhost:{}",
+                        this.pf_dialog_pod_name,
+                        this.pf_dialog_ports
+                            .get(this.pf_dialog_selected)
+                            .map(|p| p.port.to_string())
+                            .unwrap_or_default(),
+                        this.pf_dialog_local_port
+                    );
+                    this.pending_confirm = Some(PendingConfirmation::StartPortForward {
+                        description: desc,
+                    });
+                } else if this.res_picker_visible {
+                    this.select_resource(cx);
+                } else if this.ctx_picker_visible {
+                    this.select_context(cx);
                 } else if this.ns_picker_visible {
                     this.select_namespace(cx);
                 } else if this.filter_mode {
@@ -1289,11 +1602,31 @@ impl Render for AppView {
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &ToggleNamespacePicker, _window, cx| {
-                this.toggle_namespace_picker(cx);
+                if !this.any_picker_visible() && !this.pf_dialog_visible && !this.pf_list_visible {
+                    this.toggle_namespace_picker(cx);
+                } else if this.ns_picker_visible {
+                    this.toggle_namespace_picker(cx); // close if already open
+                }
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &ToggleContextPicker, _window, cx| {
+                if !this.any_picker_visible() && !this.pf_dialog_visible && !this.pf_list_visible {
+                    this.toggle_context_picker(cx);
+                } else if this.ctx_picker_visible {
+                    this.toggle_context_picker(cx);
+                }
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &ToggleResourcePicker, _window, cx| {
+                if !this.any_picker_visible() && !this.pf_dialog_visible && !this.pf_list_visible {
+                    this.toggle_resource_picker();
+                } else if this.res_picker_visible {
+                    this.toggle_resource_picker();
+                }
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &ToggleSidebar, window, cx| {
-                if !this.detail_visible {
+                if !this.detail_visible && !this.any_picker_visible() && !this.pf_dialog_visible && !this.pf_list_visible {
                     this.active_panel = match this.active_panel {
                         FocusPanel::Sidebar => {
                             // Focus the table so keyboard nav works
@@ -1313,9 +1646,11 @@ impl Render for AppView {
             .on_action(cx.listener(|this, _: &Backspace, _window, cx| {
                 if this.pf_dialog_visible {
                     this.pf_dialog_local_port.pop();
-                } else if this.ns_picker_visible {
-                    this.ns_picker_filter.pop();
-                    this.ns_picker_selected = 0;
+                } else if this.any_picker_visible() {
+                    if let Some(f) = this.active_picker_filter_mut() {
+                        f.pop();
+                    }
+                    this.reset_active_picker_selection();
                 } else if this.filter_mode {
                     this.filter_text.pop();
                     this.selected_row = 0;
@@ -1325,40 +1660,79 @@ impl Render for AppView {
                 }
                 cx.notify();
             }))
-            // Detail tab switching (1-4)
+            // Detail tab switching (1-4) — guarded when pickers open
             .on_action(cx.listener(|this, _: &DetailTab1, _window, cx| {
-                if this.detail_visible {
+                if this.detail_visible && !this.any_picker_visible() {
                     this.switch_detail_tab(DetailTab::Overview, cx);
                     cx.notify();
                 }
             }))
             .on_action(cx.listener(|this, _: &DetailTab2, _window, cx| {
-                if this.detail_visible {
+                if this.detail_visible && !this.any_picker_visible() {
                     this.switch_detail_tab(DetailTab::Yaml, cx);
                     cx.notify();
                 }
             }))
             .on_action(cx.listener(|this, _: &DetailTab3, _window, cx| {
-                if this.detail_visible {
+                if this.detail_visible && !this.any_picker_visible() {
                     this.switch_detail_tab(DetailTab::Events, cx);
                     cx.notify();
                 }
             }))
             .on_action(cx.listener(|this, _: &DetailTab4, _window, cx| {
-                if this.detail_visible {
+                if this.detail_visible && !this.any_picker_visible() {
                     this.switch_detail_tab(DetailTab::Logs, cx);
                     cx.notify();
                 }
             }))
             .on_action(cx.listener(|this, _: &RestartResource, _window, cx| {
-                if !this.command_mode && !this.filter_mode && !this.ns_picker_visible {
-                    this.restart_current_resource(cx);
+                if !this.command_mode
+                    && !this.filter_mode
+                    && !this.any_picker_visible()
+                    && !this.pf_dialog_visible
+                    && !this.pf_list_visible
+                    && this.pending_confirm.is_none()
+                {
+                    // Determine what would be restarted
+                    let target = if this.detail_visible {
+                        this.detail_data
+                            .as_ref()
+                            .map(|d| (d.name.clone(), d.resource_type.clone()))
+                    } else {
+                        let filtered = this.filtered_rows();
+                        filtered.get(this.selected_row).and_then(|(_, row)| {
+                            row.cells
+                                .first()
+                                .map(|n| (n.clone(), this.current_resource.clone()))
+                        })
+                    };
+                    match target {
+                        Some((name, resource_type)) => {
+                            if matches!(
+                                resource_type.as_str(),
+                                "pods" | "deployments" | "statefulsets" | "daemonsets"
+                            ) {
+                                this.pending_confirm =
+                                    Some(PendingConfirmation::Restart { name, resource_type });
+                            } else {
+                                this.status_message =
+                                    format!("Restart not supported for {resource_type}");
+                            }
+                        }
+                        None => {
+                            this.status_message = "No resource selected to restart".to_string();
+                        }
+                    }
                     cx.notify();
                 }
             }))
             .on_action(cx.listener(|this, _: &ApplyYaml, _window, cx| {
-                if this.detail_visible && this.detail_tab == DetailTab::Yaml {
-                    this.apply_yaml(cx);
+                if this.detail_visible
+                    && this.detail_tab == DetailTab::Yaml
+                    && !this.any_picker_visible()
+                    && this.pending_confirm.is_none()
+                {
+                    this.pending_confirm = Some(PendingConfirmation::ApplyYaml);
                     cx.notify();
                 }
             }))
@@ -1367,17 +1741,26 @@ impl Render for AppView {
                     && !this.filter_mode
                     && !this.pf_dialog_visible
                     && !this.pf_list_visible
-                    && !this.ns_picker_visible
+                    && !this.any_picker_visible()
                 {
                     this.open_port_forward_dialog(cx);
                     cx.notify();
                 }
             }))
             .on_action(cx.listener(|this, _: &StopPortForward, _window, cx| {
-                if this.pf_list_visible {
+                if this.pf_list_visible
+                    && !this.any_picker_visible()
+                    && this.pending_confirm.is_none()
+                {
                     if let Some(entry) = this.port_forwards.get(this.pf_list_selected) {
-                        let id = entry.id;
-                        this.stop_port_forward(id);
+                        let desc = format!(
+                            "{}:{} -> {}",
+                            entry.pod_name, entry.remote_port, entry.local_port
+                        );
+                        this.pending_confirm = Some(PendingConfirmation::StopPortForward {
+                            id: entry.id,
+                            description: desc,
+                        });
                     }
                     cx.notify();
                 }
@@ -1390,10 +1773,13 @@ impl Render for AppView {
                             this.pf_dialog_local_port.push_str(key_char);
                         }
                     }
-                } else if this.ns_picker_visible {
+                } else if this.any_picker_visible() {
+                    // All chars go to filter (arrows handled by MoveUp/MoveDown actions)
                     if let Some(key_char) = &event.keystroke.key_char {
-                        this.ns_picker_filter.push_str(key_char);
-                        this.ns_picker_selected = 0;
+                        if let Some(f) = this.active_picker_filter_mut() {
+                            f.push_str(key_char);
+                        }
+                        this.reset_active_picker_selection();
                     }
                 } else if this.filter_mode {
                     if let Some(key_char) = &event.keystroke.key_char {
@@ -1409,7 +1795,36 @@ impl Render for AppView {
                 cx.notify();
             }))
             // Header
-            .child(header)
+            .child(header);
+
+        // Confirmation banner
+        if let Some(confirm) = &self.pending_confirm {
+            let msg = Self::confirm_message(confirm);
+            root = root.child(
+                div()
+                    .w_full()
+                    .px_4()
+                    .py_2()
+                    .bg(rgb(0xf9e2af))
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .child(
+                        div()
+                            .text_color(rgb(0x1e1e2e))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(SharedString::from(msg)),
+                    )
+                    .child(
+                        div()
+                            .text_color(rgb(0x1e1e2e))
+                            .text_sm()
+                            .child("Enter: confirm | Esc: cancel"),
+                    ),
+            );
+        }
+
+        root = root
             // Body: sidebar + content
             .child({
                 let weak_sidebar = weak.clone();
@@ -1463,11 +1878,14 @@ impl Render for AppView {
                             self.detail_logs_loading,
                             SPINNER_FRAMES[self.spinner_frame % SPINNER_FRAMES.len()],
                             self.can_restart(),
+                            self.can_port_forward(),
                             self.yaml_editor.clone(),
                             PanelColors::from_theme(cx),
                         );
                         let weak_detail = weak.clone();
                         let weak_restart = weak.clone();
+                        let weak_apply = weak.clone();
+                        let weak_pf = weak.clone();
                         let weak_pod = weak.clone();
                         body = body.child(div().flex_1().child(
                             panel.into_element_with_clicks(
@@ -1482,7 +1900,48 @@ impl Render for AppView {
                                 move |_ev, _window, cx| {
                                     weak_restart
                                         .update(cx, |this, cx| {
-                                            this.restart_current_resource(cx);
+                                            // Same confirmation as keyboard `r`
+                                            if this.pending_confirm.is_none() {
+                                                let target = this.detail_data.as_ref().map(|d| {
+                                                    (d.name.clone(), d.resource_type.clone())
+                                                });
+                                                if let Some((name, resource_type)) = target {
+                                                    if matches!(
+                                                        resource_type.as_str(),
+                                                        "pods"
+                                                            | "deployments"
+                                                            | "statefulsets"
+                                                            | "daemonsets"
+                                                    ) {
+                                                        this.pending_confirm =
+                                                            Some(PendingConfirmation::Restart {
+                                                                name,
+                                                                resource_type,
+                                                            });
+                                                    }
+                                                }
+                                            }
+                                            cx.notify();
+                                        })
+                                        .ok();
+                                },
+                                // Apply YAML button
+                                move |_ev, _window, cx| {
+                                    weak_apply
+                                        .update(cx, |this, cx| {
+                                            if this.pending_confirm.is_none() {
+                                                this.pending_confirm =
+                                                    Some(PendingConfirmation::ApplyYaml);
+                                            }
+                                            cx.notify();
+                                        })
+                                        .ok();
+                                },
+                                // Port Forward button
+                                move |_ev, _window, cx| {
+                                    weak_pf
+                                        .update(cx, |this, cx| {
+                                            this.open_port_forward_dialog(cx);
                                             cx.notify();
                                         })
                                         .ok();
@@ -1543,6 +2002,50 @@ impl Render for AppView {
         // Check port-forward health
         self.check_port_forward_health();
 
+        // Resource picker overlay
+        if self.res_picker_visible {
+            let weak_res_pick = cx.weak_entity();
+            let picker = ResourcePicker::new(
+                &self.filtered_resources(),
+                self.res_picker_selected,
+                &self.res_picker_filter,
+                &self.current_resource,
+                PanelColors::from_theme(cx),
+            );
+            root = root.child(picker.into_element(move |idx, _ev, _window, cx| {
+                weak_res_pick
+                    .update(cx, |this, cx| {
+                        this.res_picker_selected = idx;
+                        this.select_resource(cx);
+                        cx.notify();
+                    })
+                    .ok();
+            }));
+        }
+
+        // Context picker overlay
+        if self.ctx_picker_visible {
+            let weak_ctx_pick = cx.weak_entity();
+            let picker = ContextPicker::new(
+                &self.filtered_contexts(),
+                self.ctx_picker_selected,
+                &self.ctx_picker_filter,
+                &self.current_context,
+                self.ctx_picker_loading,
+                &spinner_text,
+                PanelColors::from_theme(cx),
+            );
+            root = root.child(picker.into_element(move |idx, _ev, _window, cx| {
+                weak_ctx_pick
+                    .update(cx, |this, cx| {
+                        this.ctx_picker_selected = idx;
+                        this.select_context(cx);
+                        cx.notify();
+                    })
+                    .ok();
+            }));
+        }
+
         // Namespace picker overlay
         if self.ns_picker_visible {
             let picker = NamespacePicker::new(
@@ -1554,10 +2057,9 @@ impl Render for AppView {
                 &spinner_text,
                 PanelColors::from_theme(cx),
             );
-            let weak_ns = weak.clone();
+            let weak_ns_pick = cx.weak_entity();
             root = root.child(picker.into_element(move |idx, _ev, _window, cx| {
-                weak_ns.update(cx, |this, cx| {
-                    // Select the clicked namespace
+                weak_ns_pick.update(cx, |this, cx| {
                     this.ns_picker_selected = idx;
                     this.select_namespace(cx);
                     cx.notify();
@@ -1581,8 +2083,30 @@ impl Render for AppView {
 
         // Port forward list overlay
         if self.pf_list_visible {
+            let weak_pf_stop = cx.weak_entity();
             let list = PortForwardList::new(&self.port_forwards, self.pf_list_selected, PanelColors::from_theme(cx));
-            root = root.child(list.into_element());
+            root = root.child(list.into_element(move |id, _ev, _window, cx| {
+                weak_pf_stop
+                    .update(cx, |this, cx| {
+                        let desc = this
+                            .port_forwards
+                            .iter()
+                            .find(|e| e.id == id)
+                            .map(|e| {
+                                format!(
+                                    "{}:{} -> {}",
+                                    e.pod_name, e.remote_port, e.local_port
+                                )
+                            })
+                            .unwrap_or_default();
+                        this.pending_confirm = Some(PendingConfirmation::StopPortForward {
+                            id,
+                            description: desc,
+                        });
+                        cx.notify();
+                    })
+                    .ok();
+            }));
         }
 
         root

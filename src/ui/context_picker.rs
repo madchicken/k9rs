@@ -3,32 +3,32 @@ use gpui::*;
 
 use crate::ui::theme::PanelColors;
 
-/// A modal overlay for selecting a namespace
-pub struct NamespacePicker {
-    namespaces: Vec<String>,
+/// A modal overlay for selecting a Kubernetes context
+pub struct ContextPicker {
+    contexts: Vec<String>,
     selected: usize,
     filter: String,
-    current_namespace: String,
+    current_context: String,
     loading: bool,
     spinner: String,
     colors: PanelColors,
 }
 
-impl NamespacePicker {
+impl ContextPicker {
     pub fn new(
-        namespaces: &[String],
+        contexts: &[String],
         selected: usize,
         filter: &str,
-        current_namespace: &str,
+        current_context: &str,
         loading: bool,
         spinner: &str,
         colors: PanelColors,
     ) -> Self {
         Self {
-            namespaces: namespaces.to_vec(),
+            contexts: contexts.to_vec(),
             selected,
             filter: filter.to_string(),
-            current_namespace: current_namespace.to_string(),
+            current_context: current_context.to_string(),
             loading,
             spinner: spinner.to_string(),
             colors,
@@ -49,9 +49,7 @@ impl NamespacePicker {
             .flex()
             .justify_center()
             .pt_8()
-            .on_mouse_down(MouseButton::Left, |_, _, _| {
-                // Absorb clicks on the backdrop
-            })
+            .on_mouse_down(MouseButton::Left, |_, _, _| {})
             .child(self.render_panel(on_item_click))
     }
 
@@ -61,8 +59,9 @@ impl NamespacePicker {
     ) -> Div {
         let on_item_click = std::rc::Rc::new(on_item_click);
         let colors = &self.colors;
+
         let mut panel = div()
-            .w(px(400.0))
+            .w(px(500.0))
             .max_h(px(500.0))
             .bg(colors.muted)
             .border_1()
@@ -84,7 +83,7 @@ impl NamespacePicker {
                     .child(
                         div()
                             .text_color(colors.primary)
-                            .child("Switch Namespace"),
+                            .child("Switch Context"),
                     ),
             )
             // Live filter indicator — only shown when typing
@@ -113,9 +112,9 @@ impl NamespacePicker {
                 )
             });
 
-        // Namespace list (scrollable)
+        // Context list (scrollable)
         let mut list = div()
-            .id("ns-picker-list")
+            .id("ctx-picker-list")
             .flex_1()
             .overflow_scroll()
             .flex()
@@ -138,21 +137,21 @@ impl NamespacePicker {
                     .child(
                         div()
                             .text_color(colors.muted_foreground)
-                            .child("Loading namespaces..."),
+                            .child("Loading contexts..."),
                     ),
             );
-        } else if self.namespaces.is_empty() {
+        } else if self.contexts.is_empty() {
             list = list.child(
                 div()
                     .px_3()
                     .py_2()
                     .text_color(colors.muted_foreground)
-                    .child("No matching namespaces"),
+                    .child("No matching contexts"),
             );
         } else {
-            for (i, ns) in self.namespaces.iter().enumerate() {
+            for (i, ctx) in self.contexts.iter().enumerate() {
                 let is_selected = i == self.selected;
-                let is_current = *ns == self.current_namespace;
+                let is_current = *ctx == self.current_context;
 
                 let bg = if is_selected {
                     colors.selection
@@ -171,15 +170,15 @@ impl NamespacePicker {
                 let hover_bg = colors.border;
                 let cb = on_item_click.clone();
                 let mut row = div()
-                    .id(SharedString::from(format!("ns-row-{i}")))
+                    .id(SharedString::from(format!("ctx-row-{i}")))
                     .px_3()
                     .py_1()
                     .bg(bg)
                     .text_color(text_color)
-                    .flex()
-                    .gap_2()
                     .cursor_pointer()
                     .hover(move |s| s.bg(hover_bg))
+                    .flex()
+                    .gap_2()
                     .on_mouse_down(MouseButton::Left, move |ev, window, cx| {
                         cb(i, ev, window, cx);
                     });
@@ -192,7 +191,7 @@ impl NamespacePicker {
                     );
                 }
 
-                row = row.child(SharedString::from(ns.clone()));
+                row = row.child(SharedString::from(ctx.clone()));
 
                 list = list.child(row);
             }

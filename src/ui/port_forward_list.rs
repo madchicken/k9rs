@@ -1,4 +1,6 @@
 use gpui::*;
+use gpui_component::button::{Button, ButtonVariants};
+use gpui_component::{IconName, Sizable};
 
 use crate::model::port_forward::{PortForwardEntry, PortForwardStatus};
 use crate::ui::theme::PanelColors;
@@ -19,7 +21,10 @@ impl PortForwardList {
         }
     }
 
-    pub fn into_element(self) -> Div {
+    pub fn into_element(
+        self,
+        on_stop: impl Fn(u64, &ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Div {
         let overlay = self.colors.overlay;
         div()
             .absolute()
@@ -31,10 +36,14 @@ impl PortForwardList {
             .justify_center()
             .pt_8()
             .on_mouse_down(MouseButton::Left, |_, _, _| {})
-            .child(self.render_panel())
+            .child(self.render_panel(on_stop))
     }
 
-    fn render_panel(self) -> Div {
+    fn render_panel(
+        self,
+        on_stop: impl Fn(u64, &ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Div {
+        let on_stop = std::rc::Rc::new(on_stop);
         let colors = &self.colors;
         let mut panel = div()
             .w(px(600.0))
@@ -95,7 +104,8 @@ impl PortForwardList {
                     .child(div().w(px(180.0)).child("POD"))
                     .child(div().w(px(100.0)).child("NAMESPACE"))
                     .child(div().w(px(70.0)).child("STATUS"))
-                    .child(div().flex_1().child("AGE")),
+                    .child(div().w(px(60.0)).child("AGE"))
+                    .child(div().flex_1()),
             );
 
             // Entries
@@ -157,10 +167,30 @@ impl PortForwardList {
                         )
                         .child(
                             div()
-                                .flex_1()
+                                .w(px(60.0))
                                 .text_color(colors.muted_foreground)
                                 .child(SharedString::from(entry.started_at.clone())),
-                        ),
+                        )
+                        .child({
+                            let is_active = matches!(entry.status, PortForwardStatus::Active);
+                            if is_active {
+                                let id = entry.id;
+                                let cb = on_stop.clone();
+                                div().child(Component::new(
+                                    Button::new(SharedString::from(format!("stop-pf-{}", id)))
+                                        .danger()
+                                        .label("Stop")
+                                        .icon(IconName::CircleX)
+                                        .small()
+                                        .compact()
+                                        .on_click(move |ev, window, cx| {
+                                            cb(id, ev, window, cx);
+                                        }),
+                                ))
+                            } else {
+                                div()
+                            }
+                        }),
                 );
             }
             panel = panel.child(list);
@@ -175,7 +205,7 @@ impl PortForwardList {
                 .border_color(colors.border)
                 .text_color(colors.muted_foreground)
                 .text_xs()
-                .child("j/k: navigate | d: stop selected | Esc: close"),
+                .child("↑↓: navigate | Esc: close"),
         );
 
         panel

@@ -15,6 +15,7 @@ pub struct DetailPanel {
     logs_loading: bool,
     spinner: String,
     can_restart: bool,
+    can_port_forward: bool,
     yaml_editor: Option<Entity<InputState>>,
     colors: PanelColors,
 }
@@ -27,6 +28,7 @@ impl DetailPanel {
         logs_loading: bool,
         spinner: &str,
         can_restart: bool,
+        can_port_forward: bool,
         yaml_editor: Option<Entity<InputState>>,
         colors: PanelColors,
     ) -> Self {
@@ -37,6 +39,7 @@ impl DetailPanel {
             logs_loading,
             spinner: spinner.to_string(),
             can_restart,
+            can_port_forward,
             yaml_editor,
             colors,
         }
@@ -46,6 +49,8 @@ impl DetailPanel {
         self,
         on_tab_click: impl Fn(DetailTab, &mut Window, &mut App) + 'static,
         on_restart: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+        on_apply_yaml: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+        on_port_forward: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
         on_pod_click: impl Fn(String, &MouseDownEvent, &mut Window, &mut App) + 'static,
     ) -> Div {
         let on_pod_click = std::rc::Rc::new(on_pod_click);
@@ -96,6 +101,32 @@ impl DetailPanel {
 
         // Right side: restart button + resource name
         let mut right = div().flex().items_center().gap_2().pr_2();
+
+        if self.active_tab == DetailTab::Yaml && self.yaml_editor.is_some() {
+            right = right.child(Component::new(
+                Button::new("apply-yaml-btn")
+                    .label("Apply")
+                    .icon(IconName::Check)
+                    .small()
+                    .compact()
+                    .on_click(move |ev, window, cx| {
+                        on_apply_yaml(ev, window, cx);
+                    }),
+            ));
+        }
+
+        if self.can_port_forward {
+            right = right.child(Component::new(
+                Button::new("pf-btn")
+                    .label("Port Forward")
+                    .icon(IconName::ArrowRight)
+                    .small()
+                    .compact()
+                    .on_click(move |ev, window, cx| {
+                        on_port_forward(ev, window, cx);
+                    }),
+            ));
+        }
 
         if self.can_restart {
             right = right.child(Component::new(
@@ -639,11 +670,11 @@ impl DetailPanel {
                             .child(SharedString::from(ev.from.clone())),
                     )
                     .child(
-                        div()
-                            .flex_1()
-                            .text_color(self.colors.secondary_foreground)
-                            .overflow_x_hidden()
-                            .child(SharedString::from(ev.message.clone())),
+                        copyable_value(
+                            &format!("ev-msg-{i}"),
+                            &ev.message,
+                            self.colors.secondary_foreground,
+                        ),
                     ),
             );
         }
@@ -688,12 +719,14 @@ impl DetailPanel {
                 .child("No logs available"),
             Some(logs) => {
                 let mut content = div().flex().flex_col().p_2().font_family("Monaco");
-                for line in logs.lines() {
+                for (i, line) in logs.lines().enumerate() {
                     content = content.child(
-                        div()
-                            .text_sm()
-                            .text_color(self.colors.foreground)
-                            .child(SharedString::from(line.to_string())),
+                        copyable_value(
+                            &format!("log-{i}"),
+                            line,
+                            self.colors.foreground,
+                        )
+                        .text_sm(),
                     );
                 }
                 content
@@ -719,7 +752,41 @@ impl DetailPanel {
     }
 }
 
+/// A value div that shows a copy icon on hover. Clicking copies to clipboard.
+fn copyable_value(id: &str, value: &str, color: Hsla) -> Stateful<Div> {
+    let val = value.to_string();
+    let val_for_click = val.clone();
+    let group_id = SharedString::from(format!("copy-{id}"));
+    let group_id2 = group_id.clone();
+    div()
+        .id(SharedString::from(id.to_string()))
+        .group(group_id)
+        .flex_1()
+        .flex()
+        .items_center()
+        .gap_1()
+        .cursor_pointer()
+        .child(
+            div()
+                .text_color(color)
+                .overflow_x_hidden()
+                .child(SharedString::from(val)),
+        )
+        .child(
+            div()
+                .text_color(color)
+                .text_xs()
+                .invisible()
+                .group_hover(group_id2, |s| s.visible())
+                .child("⎘"),
+        )
+        .on_click(move |_ev, _window, cx| {
+            cx.write_to_clipboard(ClipboardItem::new_string(val_for_click.clone()));
+        })
+}
+
 fn render_kv(key: &str, value: &str, colors: &PanelColors) -> Div {
+    let id = format!("kv-{}-{}", key, &value[..value.len().min(20)]);
     div()
         .flex()
         .gap_2()
@@ -730,12 +797,7 @@ fn render_kv(key: &str, value: &str, colors: &PanelColors) -> Div {
                 .text_color(colors.muted_foreground)
                 .child(SharedString::from(key.to_string())),
         )
-        .child(
-            div()
-                .flex_1()
-                .text_color(colors.foreground)
-                .child(SharedString::from(value.to_string())),
-        )
+        .child(copyable_value(&id, value, colors.foreground))
 }
 
 fn render_tag(key: &str, value: &str, _colors: &PanelColors) -> AnyElement {
