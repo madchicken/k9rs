@@ -1,5 +1,6 @@
 use gpui::*;
 use gpui_component::input::{InputEvent, InputState};
+use gpui_component::scroll::ScrollableElement;
 use gpui_component::table::{Table, TableEvent, TableState};
 use gpui_component::theme::ActiveTheme;
 

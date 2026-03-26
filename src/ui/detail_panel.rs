@@ -1,6 +1,7 @@
 use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputState};
+use gpui_component::scroll::ScrollableElement;
 use gpui_component::tab::{Tab, TabBar};
 use gpui_component::{IconName, Sizable};
 
@@ -159,16 +160,29 @@ impl DetailPanel {
             DetailTab::Logs => self.render_logs(),
         };
 
-        let mut root = div().flex().flex_col().w_full().h_full().child(top_bar);
+        let mut root = div()
+            .flex()
+            .flex_col()
+            .size_full()
+            .min_h(px(0.0))
+            .child(top_bar);
 
         if is_yaml_editor {
-            root = root.child(div().flex_1().overflow_hidden().child(tab_content));
+            root = root.child(
+                div()
+                    .flex_1()
+                    .min_h(px(0.0))
+                    .overflow_hidden()
+                    .child(tab_content),
+            );
         } else {
             root = root.child(
                 div()
                     .id("detail-content-scroll")
                     .flex_1()
-                    .overflow_scroll()
+                    .min_h(px(0.0))
+                    .overflow_y_scroll()
+                    .overflow_x_scroll()
                     .child(tab_content),
             );
         }
