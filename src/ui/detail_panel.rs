@@ -1,6 +1,7 @@
 use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputState};
+use gpui_component::scroll::ScrollableElement;
 use gpui_component::tab::{Tab, TabBar};
 use gpui_component::{IconName, Sizable};
 
@@ -159,16 +160,29 @@ impl DetailPanel {
             DetailTab::Logs => self.render_logs(),
         };
 
-        let mut root = div().flex().flex_col().w_full().h_full().child(top_bar);
+        let mut root = div()
+            .flex()
+            .flex_col()
+            .size_full()
+            .min_h(px(0.0))
+            .child(top_bar);
 
         if is_yaml_editor {
-            root = root.child(div().flex_1().overflow_hidden().child(tab_content));
+            root = root.child(
+                div()
+                    .flex_1()
+                    .min_h(px(0.0))
+                    .overflow_hidden()
+                    .child(tab_content),
+            );
         } else {
             root = root.child(
                 div()
                     .id("detail-content-scroll")
                     .flex_1()
-                    .overflow_scroll()
+                    .min_h(px(0.0))
+                    .overflow_y_scroll()
+                    .overflow_x_scroll()
                     .child(tab_content),
             );
         }
@@ -250,42 +264,85 @@ impl DetailPanel {
 
         // Annotations
         if !self.detail.annotations.is_empty() {
-            let mut d = div().flex().flex_col().gap_1();
-            for (k, v) in &self.detail.annotations {
-                d = d.child(render_kv(k, v, &self.colors));
+            let mut d = div().flex().flex_col().gap_0();
+            // Header
+            d = d.child(
+                div()
+                    .flex()
+                    .gap_2()
+                    .py_1()
+                    .text_xs()
+                    .text_color(self.colors.primary)
+                    .child(div().w(px(260.0)).child("KEY"))
+                    .child(div().flex_1().child("VALUE")),
+            );
+            for (i, (k, v)) in self.detail.annotations.iter().enumerate() {
+                let bg = if i % 2 == 0 {
+                    self.colors.background
+                } else {
+                    self.colors.list_even
+                };
+                let id = format!("ann-{i}");
+                d = d.child(
+                    div()
+                        .flex()
+                        .gap_2()
+                        .py_px()
+                        .bg(bg)
+                        .text_sm()
+                        .child(
+                            div()
+                                .w(px(260.0))
+                                .text_color(self.colors.muted_foreground)
+                                .overflow_x_hidden()
+                                .child(SharedString::from(k.clone())),
+                        )
+                        .child(copyable_value(&id, v, self.colors.foreground)),
+                );
             }
             content = content.child(self.render_section("Annotations", d));
         }
 
         // Conditions
         if !self.detail.conditions.is_empty() {
-            let mut d = div().flex().flex_col().gap_1();
+            let mut d = div().flex().flex_col().gap_0();
+            // Header
             d = d.child(
                 div()
                     .flex()
                     .gap_2()
-                    .text_color(self.colors.primary)
+                    .py_1()
                     .text_xs()
-                    .child(div().w(px(140.0)).child("TYPE"))
+                    .text_color(self.colors.primary)
+                    .child(div().w(px(160.0)).child("TYPE"))
                     .child(div().w(px(60.0)).child("STATUS"))
-                    .child(div().w(px(100.0)).child("AGE"))
+                    .child(div().w(px(110.0)).child("AGE"))
                     .child(div().flex_1().child("MESSAGE")),
             );
-            for cond in &self.detail.conditions {
+            for (i, cond) in self.detail.conditions.iter().enumerate() {
+                let bg = if i % 2 == 0 {
+                    self.colors.background
+                } else {
+                    self.colors.list_even
+                };
                 let status_color = if cond.status == "True" {
                     self.colors.success
                 } else {
                     self.colors.danger
                 };
+                let id = format!("cond-msg-{i}");
                 d = d.child(
                     div()
                         .flex()
                         .gap_2()
+                        .py_px()
+                        .bg(bg)
                         .text_sm()
                         .child(
                             div()
-                                .w(px(140.0))
+                                .w(px(160.0))
                                 .text_color(self.colors.foreground)
+                                .overflow_x_hidden()
                                 .child(SharedString::from(cond.type_.clone())),
                         )
                         .child(
@@ -296,17 +353,11 @@ impl DetailPanel {
                         )
                         .child(
                             div()
-                                .w(px(100.0))
+                                .w(px(110.0))
                                 .text_color(self.colors.muted_foreground)
                                 .child(SharedString::from(cond.last_transition.clone())),
                         )
-                        .child(
-                            div()
-                                .flex_1()
-                                .text_color(self.colors.secondary_foreground)
-                                .overflow_x_hidden()
-                                .child(SharedString::from(cond.message.clone())),
-                        ),
+                        .child(copyable_value(&id, &cond.message, self.colors.secondary_foreground)),
                 );
             }
             content = content.child(self.render_section("Conditions", d));
