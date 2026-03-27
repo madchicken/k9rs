@@ -264,9 +264,41 @@ impl DetailPanel {
 
         // Annotations
         if !self.detail.annotations.is_empty() {
-            let mut d = div().flex().flex_col().gap_1();
-            for (k, v) in &self.detail.annotations {
-                d = d.child(render_kv(k, v, &self.colors));
+            let mut d = div().flex().flex_col().gap_0();
+            // Header
+            d = d.child(
+                div()
+                    .flex()
+                    .gap_2()
+                    .py_1()
+                    .text_xs()
+                    .text_color(self.colors.primary)
+                    .child(div().w(px(260.0)).child("KEY"))
+                    .child(div().flex_1().child("VALUE")),
+            );
+            for (i, (k, v)) in self.detail.annotations.iter().enumerate() {
+                let bg = if i % 2 == 0 {
+                    self.colors.background
+                } else {
+                    self.colors.list_even
+                };
+                let id = format!("ann-{i}");
+                d = d.child(
+                    div()
+                        .flex()
+                        .gap_2()
+                        .py_px()
+                        .bg(bg)
+                        .text_sm()
+                        .child(
+                            div()
+                                .w(px(260.0))
+                                .text_color(self.colors.muted_foreground)
+                                .overflow_x_hidden()
+                                .child(SharedString::from(k.clone())),
+                        )
+                        .child(copyable_value(&id, v, self.colors.foreground)),
+                );
             }
             content = content.child(self.render_section("Annotations", d));
         }
