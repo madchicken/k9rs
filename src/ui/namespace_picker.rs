@@ -38,9 +38,11 @@ impl NamespacePicker {
     pub fn into_element(
         self,
         on_item_click: impl Fn(usize, &MouseDownEvent, &mut Window, &mut App) + 'static,
-    ) -> Div {
+    ) -> Stateful<Div> {
         let overlay = self.colors.overlay;
         div()
+            .id("ns-picker-overlay")
+            .occlude()
             .absolute()
             .top(px(0.0))
             .left(px(0.0))
@@ -49,9 +51,7 @@ impl NamespacePicker {
             .flex()
             .justify_center()
             .pt_8()
-            .on_mouse_down(MouseButton::Left, |_, _, _| {
-                // Absorb clicks on the backdrop
-            })
+            .on_mouse_down(MouseButton::Left, |_, _, _| {})
             .child(self.render_panel(on_item_click))
     }
 

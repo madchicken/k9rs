@@ -1,5 +1,5 @@
 use gpui::*;
-use gpui_component::input::InputState;
+use gpui_component::input::{InputEvent, InputState};
 use gpui_component::table::{Table, TableEvent, TableState};
 use gpui_component::theme::ActiveTheme;
 
@@ -98,6 +98,7 @@ pub struct AppView {
     pf_dialog_ports: Vec<PodPort>,
     pf_dialog_selected: usize,
     pf_dialog_local_port: String,
+    pf_dialog_input: Option<Entity<InputState>>,
     pf_dialog_loading: bool,
     // Port forward list
     pf_list_visible: bool,
@@ -124,6 +125,8 @@ pub struct AppView {
     res_picker_filter: String,
     // Confirmation banner for destructive actions
     pending_confirm: Option<PendingConfirmation>,
+    // Error banner — shown prominently when API calls fail
+    error_banner: Option<String>,
 }
 
 impl Focusable for AppView {
@@ -184,6 +187,7 @@ impl AppView {
             pf_dialog_ports: vec![],
             pf_dialog_selected: 0,
             pf_dialog_local_port: String::new(),
+            pf_dialog_input: None,
             pf_dialog_loading: false,
             pf_list_visible: false,
             pf_list_selected: 0,
@@ -204,6 +208,7 @@ impl AppView {
             res_picker_selected: 0,
             res_picker_filter: String::new(),
             pending_confirm: None,
+            error_banner: None,
         };
 
         if let Some(ctx) = context {
@@ -352,14 +357,15 @@ impl AppView {
                             this.table_data = data.clone();
                             this.selected_row = 0;
                             this.status_message = "Connected".to_string();
-                            // Update the gpui-component table delegate
+                            this.error_banner = None; // clear error on success
+                                                      // Update the gpui-component table delegate
                             this.table_state.update(cx, |state, cx| {
                                 state.delegate_mut().update_data(data);
                                 state.refresh(cx);
                             });
                         }
                         Err(e) => {
-                            this.status_message = format!("Error: {e}");
+                            this.show_error(format!("Failed to load resources: {e}"));
                             this.table_data = TableData::empty();
                             this.table_state.update(cx, |state, cx| {
                                 state.delegate_mut().update_data(TableData::empty());
@@ -394,7 +400,7 @@ impl AppView {
                             this.ns_picker_list = names;
                         }
                         Err(e) => {
-                            this.status_message = format!("Error listing namespaces: {e}");
+                            this.show_error(format!("Failed to list namespaces: {e}"));
                             this.ns_picker_visible = false;
                         }
                     }
@@ -450,7 +456,7 @@ impl AppView {
                             this.detail_data = Some(detail);
                         }
                         Err(e) => {
-                            this.status_message = format!("Error: {e}");
+                            this.show_error(format!("Error: {e}"));
                             this.detail_visible = false;
                         }
                     }
@@ -551,7 +557,7 @@ impl AppView {
                             this.detail_data = Some(detail);
                         }
                         Err(e) => {
-                            this.status_message = format!("Error: {e}");
+                            this.show_error(format!("Error: {e}"));
                             this.detail_visible = false;
                         }
                     }
@@ -702,6 +708,52 @@ impl AppView {
     }
 
     /// Ensure the YAML editor exists and is populated with current YAML
+    fn ensure_pf_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.pf_dialog_input.is_some() {
+            return;
+        }
+        let default = self.pf_dialog_local_port.clone();
+        let editor = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("same as remote")
+                .default_value(default)
+                .validate(|text, _cx| text.chars().all(|c| c.is_ascii_digit()))
+        });
+        // Subscribe to Enter key from the Input to trigger port forward confirmation
+        cx.subscribe_in(
+            &editor,
+            window,
+            |this, _input, event: &InputEvent, _window, cx| {
+                if let InputEvent::PressEnter { .. } = event {
+                    // Sync input value and trigger confirmation
+                    if let Some(input) = &this.pf_dialog_input {
+                        this.pf_dialog_local_port = input.read(cx).value().to_string();
+                    }
+                    let local_port_display = if this.pf_dialog_local_port.is_empty() {
+                        "same".to_string()
+                    } else {
+                        this.pf_dialog_local_port.clone()
+                    };
+                    let desc = format!(
+                        "{}:{} -> localhost:{}",
+                        this.pf_dialog_pod_name,
+                        this.pf_dialog_ports
+                            .get(this.pf_dialog_selected)
+                            .map(|p| p.port.to_string())
+                            .unwrap_or_default(),
+                        local_port_display
+                    );
+                    this.pf_dialog_visible = false;
+                    this.pending_confirm =
+                        Some(PendingConfirmation::StartPortForward { description: desc });
+                    cx.notify();
+                }
+            },
+        )
+        .detach();
+        self.pf_dialog_input = Some(editor);
+    }
+
     fn ensure_yaml_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.yaml_editor.is_some() {
             return;
@@ -802,6 +854,7 @@ impl AppView {
         self.pf_dialog_ports = vec![];
         self.pf_dialog_selected = 0;
         self.pf_dialog_local_port.clear();
+        self.pf_dialog_input = None; // recreate on next render
         self.pf_dialog_loading = true;
 
         cx.spawn(async move |this, cx: &mut AsyncApp| {
@@ -819,10 +872,12 @@ impl AppView {
                             // Auto-suggest local port = remote port
                             if let Some(first) = this.pf_dialog_ports.first() {
                                 this.pf_dialog_local_port = first.port.to_string();
+                                // Recreate input with new default value on next render
+                                this.pf_dialog_input = None;
                             }
                         }
                         Err(e) => {
-                            this.status_message = format!("Error: {e}");
+                            this.show_error(format!("Error: {e}"));
                         }
                     }
                     cx.notify();
@@ -1154,7 +1209,7 @@ impl AppView {
                             this.ctx_picker_list = names;
                         }
                         Err(e) => {
-                            this.status_message = format!("Error listing contexts: {e}");
+                            this.show_error(format!("Failed to list contexts: {e}"));
                             this.ctx_picker_visible = false;
                         }
                     }
@@ -1286,6 +1341,18 @@ impl AppView {
         self.ns_picker_visible || self.ctx_picker_visible || self.res_picker_visible
     }
 
+    /// Show an error banner prominently. Dismissed with Esc.
+    fn show_error(&mut self, msg: impl Into<String>) {
+        let msg = msg.into();
+        self.status_message = msg.clone();
+        self.error_banner = Some(msg);
+    }
+
+    /// Returns true if any modal overlay (picker, dialog, list) is open
+    fn any_overlay_visible(&self) -> bool {
+        self.any_picker_visible() || self.pf_dialog_visible || self.pf_list_visible
+    }
+
     /// Get mutable ref to the active picker's filter string
     fn active_picker_filter_mut(&mut self) -> Option<&mut String> {
         if self.ns_picker_visible {
@@ -1394,9 +1461,18 @@ impl Render for AppView {
             self.ensure_yaml_editor(window, cx);
         }
 
-        // When detail or picker is visible, focus the app root so key bindings work
-        // (the table captures arrow keys otherwise)
-        if self.detail_visible || self.any_picker_visible() {
+        // Ensure port forward input exists when dialog is visible
+        if self.pf_dialog_visible {
+            self.ensure_pf_input(window, cx);
+            // Focus the Input so it can receive keyboard events
+            if let Some(input) = &self.pf_dialog_input {
+                let input_focus = input.read(cx).focus_handle(cx);
+                if !input_focus.is_focused(window) {
+                    input_focus.focus(window);
+                }
+            }
+        } else {
+            // When no Input needs focus, keep focus on the app root
             if !self.focus_handle.is_focused(window) {
                 self.focus_handle.focus(window);
             }
@@ -1485,26 +1561,12 @@ impl Render for AppView {
                 this.move_selection(1);
                 cx.notify();
             }))
-            .on_action(cx.listener(|this, _: &ActivateCommand, _window, cx| {
-                if !this.any_picker_visible() {
-                    this.command_mode = true;
-                    this.command_input.clear();
-                }
-                cx.notify();
-            }))
-            .on_action(cx.listener(|this, _: &ActivateFilter, _window, cx| {
-                if this.any_picker_visible() {
-                    // `/` inside a picker is just another filter char — ignore the action
-                } else if !this.detail_visible {
-                    this.filter_mode = true;
-                    this.filter_text.clear();
-                    this.selected_row = 0;
-                    this.update_table_filter(cx);
-                }
-                cx.notify();
-            }))
+            // Note: ActivateCommand (:) and ActivateFilter (/) are handled
+            // in on_key_down to avoid consuming keystrokes in overlays
             .on_action(cx.listener(|this, _: &GoBack, window, cx| {
-                if this.pending_confirm.is_some() {
+                if this.error_banner.is_some() {
+                    this.error_banner = None;
+                } else if this.pending_confirm.is_some() {
                     this.pending_confirm = None;
                 } else if this.pf_dialog_visible {
                     this.pf_dialog_visible = false;
@@ -1531,9 +1593,6 @@ impl Render for AppView {
                     }
                 } else if this.detail_visible {
                     this.close_detail();
-                    // Re-focus the table
-                    let handle = this.table_state.read(cx).focus_handle(cx);
-                    handle.focus(window);
                 } else if this.filter_mode {
                     this.filter_mode = false;
                     this.filter_text.clear();
@@ -1544,28 +1603,19 @@ impl Render for AppView {
                     this.command_input.clear();
                 } else if this.active_panel == FocusPanel::Sidebar {
                     this.active_panel = FocusPanel::Table;
-                    let handle = this.table_state.read(cx).focus_handle(cx);
-                    handle.focus(window);
                 } else if this.current_resource == "namespaces" {
                     this.switch_resource("pods", cx);
                 }
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &Enter, window, cx| {
-                if this.pending_confirm.is_some() {
+                if this.error_banner.is_some() {
+                    // Retry: clear error and reload
+                    this.error_banner = None;
+                    this.load_resource_data(cx);
+                } else if this.pending_confirm.is_some() {
                     this.execute_confirmed(cx);
-                } else if this.pf_dialog_visible {
-                    let desc = format!(
-                        "{}:{} -> localhost:{}",
-                        this.pf_dialog_pod_name,
-                        this.pf_dialog_ports
-                            .get(this.pf_dialog_selected)
-                            .map(|p| p.port.to_string())
-                            .unwrap_or_default(),
-                        this.pf_dialog_local_port
-                    );
-                    this.pending_confirm =
-                        Some(PendingConfirmation::StartPortForward { description: desc });
+                // Note: pf_dialog Enter is handled by Input subscription in ensure_pf_input
                 } else if this.res_picker_visible {
                     this.select_resource(cx);
                 } else if this.ctx_picker_visible {
@@ -1583,9 +1633,6 @@ impl Render for AppView {
                         let api_name = entry.api_name.to_string();
                         this.active_panel = FocusPanel::Table;
                         this.switch_resource(&api_name, cx);
-                        // Focus table for keyboard nav
-                        let handle = this.table_state.read(cx).focus_handle(cx);
-                        handle.focus(window);
                     }
                 } else if this.current_resource == "namespaces" {
                     if let Some(row) = this.table_data.rows.get(this.selected_row) {
@@ -1601,7 +1648,7 @@ impl Render for AppView {
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &ToggleNamespacePicker, _window, cx| {
-                if !this.any_picker_visible() && !this.pf_dialog_visible && !this.pf_list_visible {
+                if !this.any_overlay_visible() {
                     this.toggle_namespace_picker(cx);
                 } else if this.ns_picker_visible {
                     this.toggle_namespace_picker(cx); // close if already open
@@ -1609,7 +1656,7 @@ impl Render for AppView {
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &ToggleContextPicker, _window, cx| {
-                if !this.any_picker_visible() && !this.pf_dialog_visible && !this.pf_list_visible {
+                if !this.any_overlay_visible() {
                     this.toggle_context_picker(cx);
                 } else if this.ctx_picker_visible {
                     this.toggle_context_picker(cx);
@@ -1617,7 +1664,7 @@ impl Render for AppView {
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &ToggleResourcePicker, _window, cx| {
-                if !this.any_picker_visible() && !this.pf_dialog_visible && !this.pf_list_visible {
+                if !this.any_overlay_visible() {
                     this.toggle_resource_picker();
                 } else if this.res_picker_visible {
                     this.toggle_resource_picker();
@@ -1625,30 +1672,17 @@ impl Render for AppView {
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &ToggleSidebar, window, cx| {
-                if !this.detail_visible
-                    && !this.any_picker_visible()
-                    && !this.pf_dialog_visible
-                    && !this.pf_list_visible
-                {
+                if !this.detail_visible && !this.any_overlay_visible() {
                     this.active_panel = match this.active_panel {
-                        FocusPanel::Sidebar => {
-                            // Focus the table so keyboard nav works
-                            let handle = this.table_state.read(cx).focus_handle(cx);
-                            handle.focus(window);
-                            FocusPanel::Table
-                        }
-                        FocusPanel::Table => {
-                            // Focus back to app root for sidebar nav
-                            this.focus_handle.focus(window);
-                            FocusPanel::Sidebar
-                        }
+                        FocusPanel::Sidebar => FocusPanel::Table,
+                        FocusPanel::Table => FocusPanel::Sidebar,
                     };
                 }
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &Backspace, _window, cx| {
                 if this.pf_dialog_visible {
-                    this.pf_dialog_local_port.pop();
+                    // Input widget handles its own backspace
                 } else if this.any_picker_visible() {
                     if let Some(f) = this.active_picker_filter_mut() {
                         f.pop();
@@ -1663,121 +1697,22 @@ impl Render for AppView {
                 }
                 cx.notify();
             }))
-            // Detail tab switching (1-4) — guarded when pickers open
-            .on_action(cx.listener(|this, _: &DetailTab1, _window, cx| {
-                if this.detail_visible && !this.any_picker_visible() {
-                    this.switch_detail_tab(DetailTab::Overview, cx);
-                    cx.notify();
-                }
-            }))
-            .on_action(cx.listener(|this, _: &DetailTab2, _window, cx| {
-                if this.detail_visible && !this.any_picker_visible() {
-                    this.switch_detail_tab(DetailTab::Yaml, cx);
-                    cx.notify();
-                }
-            }))
-            .on_action(cx.listener(|this, _: &DetailTab3, _window, cx| {
-                if this.detail_visible && !this.any_picker_visible() {
-                    this.switch_detail_tab(DetailTab::Events, cx);
-                    cx.notify();
-                }
-            }))
-            .on_action(cx.listener(|this, _: &DetailTab4, _window, cx| {
-                if this.detail_visible && !this.any_picker_visible() {
-                    this.switch_detail_tab(DetailTab::Logs, cx);
-                    cx.notify();
-                }
-            }))
-            .on_action(cx.listener(|this, _: &RestartResource, _window, cx| {
-                if !this.command_mode
-                    && !this.filter_mode
-                    && !this.any_picker_visible()
-                    && !this.pf_dialog_visible
-                    && !this.pf_list_visible
-                    && this.pending_confirm.is_none()
-                {
-                    // Determine what would be restarted
-                    let target = if this.detail_visible {
-                        this.detail_data
-                            .as_ref()
-                            .map(|d| (d.name.clone(), d.resource_type.clone()))
-                    } else {
-                        let filtered = this.filtered_rows();
-                        filtered.get(this.selected_row).and_then(|(_, row)| {
-                            row.cells
-                                .first()
-                                .map(|n| (n.clone(), this.current_resource.clone()))
-                        })
-                    };
-                    match target {
-                        Some((name, resource_type)) => {
-                            if matches!(
-                                resource_type.as_str(),
-                                "pods" | "deployments" | "statefulsets" | "daemonsets"
-                            ) {
-                                this.pending_confirm = Some(PendingConfirmation::Restart {
-                                    name,
-                                    resource_type,
-                                });
-                            } else {
-                                this.status_message =
-                                    format!("Restart not supported for {resource_type}");
-                            }
-                        }
-                        None => {
-                            this.status_message = "No resource selected to restart".to_string();
-                        }
-                    }
-                    cx.notify();
-                }
-            }))
+            // Note: single-char actions (r, f, d, :, /, 1-4) are handled in on_key_down
+            // to avoid consuming keystrokes when overlays need text input
             .on_action(cx.listener(|this, _: &ApplyYaml, _window, cx| {
                 if this.detail_visible
                     && this.detail_tab == DetailTab::Yaml
-                    && !this.any_picker_visible()
+                    && !this.any_overlay_visible()
                     && this.pending_confirm.is_none()
                 {
                     this.pending_confirm = Some(PendingConfirmation::ApplyYaml);
                     cx.notify();
                 }
             }))
-            .on_action(cx.listener(|this, _: &OpenPortForward, _window, cx| {
-                if !this.command_mode
-                    && !this.filter_mode
-                    && !this.pf_dialog_visible
-                    && !this.pf_list_visible
-                    && !this.any_picker_visible()
-                {
-                    this.open_port_forward_dialog(cx);
-                    cx.notify();
-                }
-            }))
-            .on_action(cx.listener(|this, _: &StopPortForward, _window, cx| {
-                if this.pf_list_visible
-                    && !this.any_picker_visible()
-                    && this.pending_confirm.is_none()
-                {
-                    if let Some(entry) = this.port_forwards.get(this.pf_list_selected) {
-                        let desc = format!(
-                            "{}:{} -> {}",
-                            entry.pod_name, entry.remote_port, entry.local_port
-                        );
-                        this.pending_confirm = Some(PendingConfirmation::StopPortForward {
-                            id: entry.id,
-                            description: desc,
-                        });
-                    }
-                    cx.notify();
-                }
-            }))
+            // OpenPortForward (f) and StopPortForward (d) handled in on_key_down
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _window, cx| {
                 if this.pf_dialog_visible {
-                    // Type digits for local port
-                    if let Some(key_char) = &event.keystroke.key_char {
-                        if key_char.chars().all(|c| c.is_ascii_digit()) {
-                            this.pf_dialog_local_port.push_str(key_char);
-                        }
-                    }
+                    // Input widget handles typing — nothing to do here
                 } else if this.any_picker_visible() {
                     // All chars go to filter (arrows handled by MoveUp/MoveDown actions)
                     if let Some(key_char) = &event.keystroke.key_char {
@@ -1795,6 +1730,95 @@ impl Render for AppView {
                 } else if this.command_mode {
                     if let Some(key_char) = &event.keystroke.key_char {
                         this.command_input.push_str(key_char);
+                    }
+                } else if !this.any_overlay_visible() && !this.pending_confirm.is_some() {
+                    // No overlay, no mode — handle single-char shortcuts
+                    if let Some(key_char) = &event.keystroke.key_char {
+                        match key_char.as_str() {
+                            // Command and filter
+                            ":" => {
+                                this.command_mode = true;
+                                this.command_input.clear();
+                            }
+                            "/" => {
+                                if !this.detail_visible {
+                                    this.filter_mode = true;
+                                    this.filter_text.clear();
+                                    this.selected_row = 0;
+                                    this.update_table_filter(cx);
+                                }
+                            }
+                            // Detail tab switching
+                            "1" if this.detail_visible => {
+                                this.switch_detail_tab(DetailTab::Overview, cx);
+                            }
+                            "2" if this.detail_visible => {
+                                this.switch_detail_tab(DetailTab::Yaml, cx);
+                            }
+                            "3" if this.detail_visible => {
+                                this.switch_detail_tab(DetailTab::Events, cx);
+                            }
+                            "4" if this.detail_visible => {
+                                this.switch_detail_tab(DetailTab::Logs, cx);
+                            }
+                            // Restart resource
+                            "r" => {
+                                let target = if this.detail_visible {
+                                    this.detail_data
+                                        .as_ref()
+                                        .map(|d| (d.name.clone(), d.resource_type.clone()))
+                                } else {
+                                    let filtered = this.filtered_rows();
+                                    filtered.get(this.selected_row).and_then(|(_, row)| {
+                                        row.cells
+                                            .first()
+                                            .map(|n| (n.clone(), this.current_resource.clone()))
+                                    })
+                                };
+                                match target {
+                                    Some((name, resource_type)) => {
+                                        if matches!(
+                                            resource_type.as_str(),
+                                            "pods" | "deployments" | "statefulsets" | "daemonsets"
+                                        ) {
+                                            this.pending_confirm =
+                                                Some(PendingConfirmation::Restart {
+                                                    name,
+                                                    resource_type,
+                                                });
+                                        } else {
+                                            this.status_message = format!(
+                                                "Restart not supported for {resource_type}"
+                                            );
+                                        }
+                                    }
+                                    None => {
+                                        this.status_message =
+                                            "No resource selected to restart".to_string();
+                                    }
+                                }
+                            }
+                            // Open port forward dialog
+                            "f" => {
+                                this.open_port_forward_dialog(cx);
+                            }
+                            // Stop port forward (only in pf list)
+                            "d" if this.pf_list_visible => {
+                                if let Some(entry) = this.port_forwards.get(this.pf_list_selected) {
+                                    let desc = format!(
+                                        "{}:{} -> {}",
+                                        entry.pod_name, entry.remote_port, entry.local_port
+                                    );
+                                    this.pf_list_visible = false;
+                                    this.pending_confirm =
+                                        Some(PendingConfirmation::StopPortForward {
+                                            id: entry.id,
+                                            description: desc,
+                                        });
+                                }
+                            }
+                            _ => {}
+                        }
                     }
                 }
                 cx.notify();
@@ -1829,6 +1853,33 @@ impl Render for AppView {
             );
         }
 
+        // Error banner — shown prominently when API calls fail
+        if let Some(error) = &self.error_banner {
+            let colors = PanelColors::from_theme(cx);
+            root = root.child(
+                div()
+                    .w_full()
+                    .px_4()
+                    .py_2()
+                    .bg(colors.danger)
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .child(
+                        div()
+                            .text_color(colors.background)
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(SharedString::from(error.clone())),
+                    )
+                    .child(
+                        div()
+                            .text_color(colors.background)
+                            .text_sm()
+                            .child("Enter: retry | Esc: dismiss"),
+                    ),
+            );
+        }
+
         root = root
             // Body: sidebar + content
             .child({
@@ -1836,6 +1887,7 @@ impl Render for AppView {
                 let detail_visible = self.detail_visible;
 
                 let current_resource = self.current_resource.clone();
+                let weak_pf_list = weak.clone();
                 let mut body = div().flex().flex_1().overflow_hidden().child(build_sidebar(
                     &current_resource,
                     pf_count,
@@ -1846,6 +1898,15 @@ impl Render for AppView {
                                     this.switch_resource(entry.api_name, cx);
                                     this.active_panel = FocusPanel::Table;
                                 }
+                                cx.notify();
+                            })
+                            .ok();
+                    },
+                    move |_ev, _window, cx| {
+                        weak_pf_list
+                            .update(cx, |this, cx| {
+                                this.pf_list_visible = true;
+                                this.pf_list_selected = 0;
                                 cx.notify();
                             })
                             .ok();
@@ -2079,7 +2140,7 @@ impl Render for AppView {
                 &self.pf_dialog_pod_name,
                 &self.pf_dialog_ports,
                 self.pf_dialog_selected,
-                &self.pf_dialog_local_port,
+                self.pf_dialog_input.clone(),
                 self.pf_dialog_loading,
                 &spinner_text,
                 PanelColors::from_theme(cx),
@@ -2106,6 +2167,8 @@ impl Render for AppView {
                                 format!("{}:{} -> {}", e.pod_name, e.remote_port, e.local_port)
                             })
                             .unwrap_or_default();
+                        // Close list first so the confirmation banner is visible
+                        this.pf_list_visible = false;
                         this.pending_confirm = Some(PendingConfirmation::StopPortForward {
                             id,
                             description: desc,

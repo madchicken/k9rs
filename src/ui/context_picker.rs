@@ -38,9 +38,11 @@ impl ContextPicker {
     pub fn into_element(
         self,
         on_item_click: impl Fn(usize, &MouseDownEvent, &mut Window, &mut App) + 'static,
-    ) -> Div {
+    ) -> Stateful<Div> {
         let overlay = self.colors.overlay;
         div()
+            .id("ctx-picker-overlay")
+            .occlude()
             .absolute()
             .top(px(0.0))
             .left(px(0.0))

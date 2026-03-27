@@ -1,4 +1,5 @@
 use gpui::*;
+use gpui_component::input::{Input, InputState};
 
 use crate::model::port_forward::PodPort;
 use crate::ui::theme::PanelColors;
@@ -8,7 +9,7 @@ pub struct PortForwardDialog {
     pod_name: String,
     ports: Vec<PodPort>,
     selected_port: usize,
-    local_port: String,
+    local_port_input: Option<Entity<InputState>>,
     loading: bool,
     spinner: String,
     colors: PanelColors,
@@ -19,7 +20,7 @@ impl PortForwardDialog {
         pod_name: &str,
         ports: &[PodPort],
         selected_port: usize,
-        local_port: &str,
+        local_port_input: Option<Entity<InputState>>,
         loading: bool,
         spinner: &str,
         colors: PanelColors,
@@ -28,16 +29,18 @@ impl PortForwardDialog {
             pod_name: pod_name.to_string(),
             ports: ports.to_vec(),
             selected_port,
-            local_port: local_port.to_string(),
-            loading: loading,
+            local_port_input,
+            loading,
             spinner: spinner.to_string(),
             colors,
         }
     }
 
-    pub fn into_element(self) -> Div {
+    pub fn into_element(self) -> Stateful<Div> {
         let overlay = self.colors.overlay;
         div()
+            .id("pf-dialog-overlay")
+            .occlude()
             .absolute()
             .top(px(0.0))
             .left(px(0.0))
@@ -149,39 +152,26 @@ impl PortForwardDialog {
             panel = panel.child(list);
         }
 
-        // Local port input
-        panel = panel.child(
-            div()
-                .px_3()
-                .py_2()
-                .border_t_1()
-                .border_color(colors.border)
-                .flex()
-                .gap_2()
-                .items_center()
-                .child(
-                    div()
-                        .text_color(colors.muted_foreground)
-                        .text_sm()
-                        .child("Local port:"),
-                )
-                .child(
-                    div()
-                        .px_2()
-                        .py_px()
-                        .bg(colors.background)
-                        .border_1()
-                        .border_color(colors.border)
-                        .rounded_sm()
-                        .min_w(px(80.0))
-                        .text_color(colors.foreground)
-                        .child(if self.local_port.is_empty() {
-                            SharedString::from("(same as remote)")
-                        } else {
-                            SharedString::from(self.local_port.clone())
-                        }),
-                ),
-        );
+        // Local port input — uses gpui-component Input for proper text editing
+        if let Some(input) = &self.local_port_input {
+            panel = panel.child(
+                div()
+                    .px_3()
+                    .py_2()
+                    .border_t_1()
+                    .border_color(colors.border)
+                    .flex()
+                    .gap_2()
+                    .items_center()
+                    .child(
+                        div()
+                            .text_color(colors.muted_foreground)
+                            .text_sm()
+                            .child("Local port:"),
+                    )
+                    .child(div().w(px(160.0)).child(Component::new(Input::new(input)))),
+            );
+        }
 
         // Footer
         panel = panel.child(
@@ -192,7 +182,7 @@ impl PortForwardDialog {
                 .border_color(colors.border)
                 .text_color(colors.muted_foreground)
                 .text_xs()
-                .child("j/k: select port | type: local port | Enter: start | Esc: cancel"),
+                .child("↑↓: select port | Type: local port | Enter: start | Esc: cancel"),
         );
 
         panel

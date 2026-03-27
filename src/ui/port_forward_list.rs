@@ -24,9 +24,11 @@ impl PortForwardList {
     pub fn into_element(
         self,
         on_stop: impl Fn(u64, &ClickEvent, &mut Window, &mut App) + 'static,
-    ) -> Div {
+    ) -> Stateful<Div> {
         let overlay = self.colors.overlay;
         div()
+            .id("pf-list-overlay")
+            .occlude()
             .absolute()
             .top(px(0.0))
             .left(px(0.0))

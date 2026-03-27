@@ -36,6 +36,7 @@ pub fn build_sidebar(
     current_resource: &str,
     active_pf_count: usize,
     on_item_click: impl Fn(usize, &ClickEvent, &mut Window, &mut App) + 'static,
+    on_pf_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
     let on_item_click = std::rc::Rc::new(on_item_click);
 
@@ -87,20 +88,26 @@ pub fn build_sidebar(
         sidebar = sidebar.child(SidebarGroup::new(category).child(menu));
     }
 
-    // Footer with port-forward count
+    // Footer with port-forward count (clickable to open list)
     if active_pf_count > 0 {
         sidebar = sidebar.footer(
             SidebarFooter::new().child(
-                h_flex()
-                    .gap_2()
-                    .items_center()
-                    .child(Component::new(
-                        gpui_component::Icon::new(IconName::ExternalLink)
-                            .with_size(gpui_component::Size::Small),
-                    ))
-                    .child(SharedString::from(format!(
-                        "Port Forwards: {active_pf_count}"
-                    ))),
+                div()
+                    .id("pf-footer")
+                    .cursor_pointer()
+                    .on_click(move |ev, window, cx| on_pf_click(ev, window, cx))
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .child(Component::new(
+                                gpui_component::Icon::new(IconName::ExternalLink)
+                                    .with_size(gpui_component::Size::Small),
+                            ))
+                            .child(SharedString::from(format!(
+                                "Port Forwards: {active_pf_count}"
+                            ))),
+                    ),
             ),
         );
     }
