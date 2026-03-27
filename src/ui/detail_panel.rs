@@ -305,33 +305,44 @@ impl DetailPanel {
 
         // Conditions
         if !self.detail.conditions.is_empty() {
-            let mut d = div().flex().flex_col().gap_1();
+            let mut d = div().flex().flex_col().gap_0();
+            // Header
             d = d.child(
                 div()
                     .flex()
                     .gap_2()
-                    .text_color(self.colors.primary)
+                    .py_1()
                     .text_xs()
-                    .child(div().w(px(140.0)).child("TYPE"))
+                    .text_color(self.colors.primary)
+                    .child(div().w(px(160.0)).child("TYPE"))
                     .child(div().w(px(60.0)).child("STATUS"))
-                    .child(div().w(px(100.0)).child("AGE"))
+                    .child(div().w(px(110.0)).child("AGE"))
                     .child(div().flex_1().child("MESSAGE")),
             );
-            for cond in &self.detail.conditions {
+            for (i, cond) in self.detail.conditions.iter().enumerate() {
+                let bg = if i % 2 == 0 {
+                    self.colors.background
+                } else {
+                    self.colors.list_even
+                };
                 let status_color = if cond.status == "True" {
                     self.colors.success
                 } else {
                     self.colors.danger
                 };
+                let id = format!("cond-msg-{i}");
                 d = d.child(
                     div()
                         .flex()
                         .gap_2()
+                        .py_px()
+                        .bg(bg)
                         .text_sm()
                         .child(
                             div()
-                                .w(px(140.0))
+                                .w(px(160.0))
                                 .text_color(self.colors.foreground)
+                                .overflow_x_hidden()
                                 .child(SharedString::from(cond.type_.clone())),
                         )
                         .child(
@@ -342,17 +353,11 @@ impl DetailPanel {
                         )
                         .child(
                             div()
-                                .w(px(100.0))
+                                .w(px(110.0))
                                 .text_color(self.colors.muted_foreground)
                                 .child(SharedString::from(cond.last_transition.clone())),
                         )
-                        .child(
-                            div()
-                                .flex_1()
-                                .text_color(self.colors.secondary_foreground)
-                                .overflow_x_hidden()
-                                .child(SharedString::from(cond.message.clone())),
-                        ),
+                        .child(copyable_value(&id, &cond.message, self.colors.secondary_foreground)),
                 );
             }
             content = content.child(self.render_section("Conditions", d));
