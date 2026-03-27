@@ -103,6 +103,7 @@ impl DetailPanel {
         if self.active_tab == DetailTab::Yaml && self.yaml_editor.is_some() {
             right = right.child(Component::new(
                 Button::new("apply-yaml-btn")
+                    .ghost()
                     .label("Apply")
                     .icon(IconName::Check)
                     .small()
@@ -116,6 +117,7 @@ impl DetailPanel {
         if self.can_port_forward {
             right = right.child(Component::new(
                 Button::new("pf-btn")
+                    .ghost()
                     .label("Port Forward")
                     .icon(IconName::ArrowRight)
                     .small()

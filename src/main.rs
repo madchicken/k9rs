@@ -151,19 +151,10 @@ fn main() {
             KeyBinding::new("down", app::MoveDown, Some("app")),
             KeyBinding::new("enter", app::Enter, Some("app")),
             KeyBinding::new("escape", app::GoBack, Some("app")),
-            KeyBinding::new(":", app::ActivateCommand, Some("app")),
             KeyBinding::new("backspace", app::Backspace, Some("app")),
-            KeyBinding::new("/", app::ActivateFilter, Some("app")),
             KeyBinding::new("tab", app::ToggleSidebar, Some("app")),
-            // Detail tab switching
-            KeyBinding::new("1", app::DetailTab1, Some("app")),
-            KeyBinding::new("2", app::DetailTab2, Some("app")),
-            KeyBinding::new("3", app::DetailTab3, Some("app")),
-            KeyBinding::new("4", app::DetailTab4, Some("app")),
-            // Actions
-            KeyBinding::new("r", app::RestartResource, Some("app")),
-            KeyBinding::new("f", app::OpenPortForward, Some("app")),
-            KeyBinding::new("d", app::StopPortForward, Some("app")),
+            // Note: single-char keys (: / r f d 1-4) are handled in on_key_down
+            // to avoid consuming keystrokes when overlays need text input
             KeyBinding::new("ctrl-s", app::ApplyYaml, Some("app")),
             KeyBinding::new("ctrl-n", app::ToggleNamespacePicker, Some("app")),
             KeyBinding::new("ctrl-k", app::ToggleContextPicker, Some("app")),
@@ -209,10 +200,8 @@ fn main() {
         window_handle
             .update(cx, |_root, window, cx| {
                 window.activate_window();
-                // Focus the table so keyboard navigation works immediately
-                let app = app_view.read(cx);
-                let table_handle = app.table_state.read(cx).focus_handle(cx);
-                table_handle.focus(window);
+                // Focus the app root so all keybindings work
+                app_view.read(cx).focus_handle(cx).focus(window);
             })
             .ok();
     });
