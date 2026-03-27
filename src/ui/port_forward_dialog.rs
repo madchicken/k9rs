@@ -169,11 +169,7 @@ impl PortForwardDialog {
                             .text_sm()
                             .child("Local port:"),
                     )
-                    .child(
-                        div()
-                            .w(px(160.0))
-                            .child(Component::new(Input::new(input))),
-                    ),
+                    .child(div().w(px(160.0)).child(Component::new(Input::new(input)))),
             );
         }
 

@@ -358,18 +358,13 @@ impl DetailPanel {
                             .text_sm()
                             .text_color(self.colors.muted_foreground)
                             .items_center()
-                            .child(
-                                div()
-                                    .flex()
-                                    .gap_1()
-                                    .items_center()
-                                    .child("Image:")
-                                    .child(copyable_value(
-                                        &format!("img-{}", c.name),
-                                        &c.image,
-                                        self.colors.secondary_foreground,
-                                    )),
-                            )
+                            .child(div().flex().gap_1().items_center().child("Image:").child(
+                                copyable_value(
+                                    &format!("img-{}", c.name),
+                                    &c.image,
+                                    self.colors.secondary_foreground,
+                                ),
+                            ))
                             .child(
                                 div().flex().gap_1().child("Ready:").child(
                                     div()

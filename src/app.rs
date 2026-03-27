@@ -358,7 +358,7 @@ impl AppView {
                             this.selected_row = 0;
                             this.status_message = "Connected".to_string();
                             this.error_banner = None; // clear error on success
-                            // Update the gpui-component table delegate
+                                                      // Update the gpui-component table delegate
                             this.table_state.update(cx, |state, cx| {
                                 state.delegate_mut().update_data(data);
                                 state.refresh(cx);
@@ -720,32 +720,36 @@ impl AppView {
                 .validate(|text, _cx| text.chars().all(|c| c.is_ascii_digit()))
         });
         // Subscribe to Enter key from the Input to trigger port forward confirmation
-        cx.subscribe_in(&editor, window, |this, _input, event: &InputEvent, _window, cx| {
-            if let InputEvent::PressEnter { .. } = event {
-                // Sync input value and trigger confirmation
-                if let Some(input) = &this.pf_dialog_input {
-                    this.pf_dialog_local_port = input.read(cx).value().to_string();
+        cx.subscribe_in(
+            &editor,
+            window,
+            |this, _input, event: &InputEvent, _window, cx| {
+                if let InputEvent::PressEnter { .. } = event {
+                    // Sync input value and trigger confirmation
+                    if let Some(input) = &this.pf_dialog_input {
+                        this.pf_dialog_local_port = input.read(cx).value().to_string();
+                    }
+                    let local_port_display = if this.pf_dialog_local_port.is_empty() {
+                        "same".to_string()
+                    } else {
+                        this.pf_dialog_local_port.clone()
+                    };
+                    let desc = format!(
+                        "{}:{} -> localhost:{}",
+                        this.pf_dialog_pod_name,
+                        this.pf_dialog_ports
+                            .get(this.pf_dialog_selected)
+                            .map(|p| p.port.to_string())
+                            .unwrap_or_default(),
+                        local_port_display
+                    );
+                    this.pf_dialog_visible = false;
+                    this.pending_confirm =
+                        Some(PendingConfirmation::StartPortForward { description: desc });
+                    cx.notify();
                 }
-                let local_port_display = if this.pf_dialog_local_port.is_empty() {
-                    "same".to_string()
-                } else {
-                    this.pf_dialog_local_port.clone()
-                };
-                let desc = format!(
-                    "{}:{} -> localhost:{}",
-                    this.pf_dialog_pod_name,
-                    this.pf_dialog_ports
-                        .get(this.pf_dialog_selected)
-                        .map(|p| p.port.to_string())
-                        .unwrap_or_default(),
-                    local_port_display
-                );
-                this.pf_dialog_visible = false;
-                this.pending_confirm =
-                    Some(PendingConfirmation::StartPortForward { description: desc });
-                cx.notify();
-            }
-        })
+            },
+        )
         .detach();
         self.pf_dialog_input = Some(editor);
     }
@@ -1346,9 +1350,7 @@ impl AppView {
 
     /// Returns true if any modal overlay (picker, dialog, list) is open
     fn any_overlay_visible(&self) -> bool {
-        self.any_picker_visible()
-            || self.pf_dialog_visible
-            || self.pf_list_visible
+        self.any_picker_visible() || self.pf_dialog_visible || self.pf_list_visible
     }
 
     /// Get mutable ref to the active picker's filter string
@@ -1670,9 +1672,7 @@ impl Render for AppView {
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &ToggleSidebar, window, cx| {
-                if !this.detail_visible
-                    && !this.any_overlay_visible()
-                {
+                if !this.detail_visible && !this.any_overlay_visible() {
                     this.active_panel = match this.active_panel {
                         FocusPanel::Sidebar => FocusPanel::Table,
                         FocusPanel::Table => FocusPanel::Sidebar,
@@ -1804,9 +1804,7 @@ impl Render for AppView {
                             }
                             // Stop port forward (only in pf list)
                             "d" if this.pf_list_visible => {
-                                if let Some(entry) =
-                                    this.port_forwards.get(this.pf_list_selected)
-                                {
+                                if let Some(entry) = this.port_forwards.get(this.pf_list_selected) {
                                     let desc = format!(
                                         "{}:{} -> {}",
                                         entry.pod_name, entry.remote_port, entry.local_port
